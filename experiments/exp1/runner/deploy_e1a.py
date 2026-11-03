@@ -16,18 +16,32 @@ from dotenv import load_dotenv
 from experiments.exp1.data.prepare_e1a import ROOT,CONFIG,sha
 from atsuite.pipeline import resolve_benchmark,target_image_tag
 from atsuite.utils import normalize_node_name,state_bucket_for_provider
+from atsuite.tracing.storage import trace_path
 
 
 def make_configs(config):
     base=json.loads((ROOT/'benchmarks/DataSciBench/config/langgraph_atg.json').read_text())
-    captures=json.loads((ROOT/'benchmarks/DataSciBench/trace/captured/manifest.json').read_text())['captures']
-    selected=next(t for t in captures if t['task_id']==config['task_id'])
+    if config.get('workload'):
+        from experiments.exp1.data.prepare_e1b import load
+        sealed,_=load(ROOT/config['workload'])
+        selected=sealed['tasks'][config['task_id']]
+    else:
+        captures=json.loads((ROOT/'benchmarks/DataSciBench/trace/captured/manifest.json').read_text())['captures']
+        selected=next(t for t in captures if t['task_id']==config['task_id'])
     paths={};experiment=config['experiment'].lower().replace('-','')
     for provider in config['providers']:
         value=json.loads(json.dumps(base));name=experiment.capitalize()+''.join(p.title() for p in provider.split('_'))
         resources=config.get('provider_resources',{}).get(provider,config['resources'])
         if provider=='aws_lambda':value['pipeline']['faas']['build']['python_version']='3.12'
         value['trace_file']='./trace/captured/'+Path(selected['capture']).name+'/trace.atg.json'
+        if config.get('task_manifest'):
+            for family in ('faas','mcp_serverless'):value['pipeline'][family]['build']['python_version']='3.12.12'
+            if provider.startswith('ali_'):
+                # Ali's published base has no Python 3.12; FC custom containers support the pinned standard image.
+                for family in ('faas','mcp_serverless'):
+                    value['pipeline'][family]['build']['base_image']='python:3.12.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c'
+            value['trace_file']=str((ROOT/config['workload']/'trace.atg.json').resolve())
+        if config.get('workload'):value['experiment_workload']=str((ROOT/config['workload']).resolve())
         unit=value['pipeline']['faas']['units'][0];unit['name']=name;unit['deploy']=resources
         server=value['pipeline']['mcp_serverless']['servers'][0];server['name']=name;server['deploy']=resources
         path=ROOT/'benchmarks/DataSciBench/config'/(experiment+'_'+provider+'.json')
@@ -60,9 +74,24 @@ def audit_image(provider, config_path):
         with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
             member=next(m for m in archive.getmembers() if m.isfile());approved_raw=archive.extractfile(member).read();approved=json.loads(approved_raw)
         policies=approved.get('tasks') or {approved['task_id']:approved}
-        captures={r['task_id']:r for r in json.loads((ROOT/'benchmarks/DataSciBench/trace/captured/manifest.json').read_text())['captures']}
+        workload=json.loads(Path(config_path).read_text()).get('experiment_workload')
+        if workload:
+            from experiments.exp1.data.prepare_e1b import load
+            sealed,_=load(workload);captures=sealed['tasks']
+            if set(policies)!=set(captures) or approved.get('workload_manifest_sha256')!=sha(Path(workload)/'manifest.json'):
+                raise ValueError('Image must contain the complete sealed workload')
+        else:captures={r['task_id']:r for r in json.loads((ROOT/'benchmarks/DataSciBench/trace/captured/manifest.json').read_text())['captures']}
         for task_id,policy in policies.items():
-            if policy['task_id']!=task_id or policy['capture_events_sha256']!=sha(ROOT/captures[task_id]['capture']/'events.jsonl'):raise ValueError('Image contains another Capture policy')
+            if policy['task_id']!=task_id or policy['capture_events_sha256']!=sha(trace_path(ROOT/captures[task_id]['capture']/'events.jsonl')):raise ValueError('Image contains another Capture policy')
+        if workload and sealed.get('task_manifest'):
+            for filename in ('bcb_checks.py','result_checks.py','bcb_cases.json.gz'):
+                source=ROOT/'benchmarks/DataSciBench/nodes/AgentTools'/filename
+                if filename=='bcb_cases.json.gz':source=ROOT/'benchmarks/DataSciBench/tasks/mix/runtime_checks.json.gz'
+                raw=subprocess.check_output(['docker','cp',name+':'+prefix+filename,'-'])
+                with tarfile.open(fileobj=io.BytesIO(raw)) as archive:
+                    member=next(m for m in archive.getmembers() if m.isfile());actual=hashlib.sha256(archive.extractfile(member).read()).hexdigest()
+                if actual!=sha(source):raise ValueError('Stale BCB validation source: '+filename)
+                files[prefix+filename]=actual
         if 'tasks' not in approved:
             trace=json.loads(Path(config_path).read_text())['trace_file']
             capture=ROOT/'benchmarks/DataSciBench'/Path(trace).parent

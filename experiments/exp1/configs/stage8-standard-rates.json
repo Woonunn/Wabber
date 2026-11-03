@@ -1,0 +1,44 @@
+{
+  "basis": "standard_public_rates",
+  "usage_date": "2026-11-01",
+  "verified_date": "2026-11-03",
+  "region": "us-east-1",
+  "account_free_tier_applied": false,
+  "account_credits_or_discounts_applied": false,
+  "tax_included": false,
+  "aws_lambda": {
+    "currency": "USD",
+    "architecture": "x86_64",
+    "gb_second": "0.0000166667",
+    "request": "0.0000002",
+    "ephemeral_gb_second": "0.0000000309",
+    "included_ephemeral_mb": 512,
+    "source": "https://aws.amazon.com/lambda/pricing/"
+  },
+  "aws_agentcore": {
+    "currency": "USD",
+    "runtime_pricing_generation": "v1",
+    "vcpu_hour": "0.0895",
+    "memory_gb_hour": "0.00945",
+    "source": "https://aws.amazon.com/bedrock/agentcore/pricing/"
+  },
+  "ali_fc": {
+    "currency": "CNY",
+    "cu": "0.00011",
+    "request_cu": "0.0075",
+    "cpu_second_cu": "1",
+    "memory_gb_second_cu": "0.15",
+    "ephemeral_gb_second_cu": "0.05",
+    "included_ephemeral_gb": 10,
+    "hourly_minimum_cny": "0.01",
+    "source": "https://help.aliyun.com/zh/functioncompute/pay-as-you-go-billing-methods"
+  },
+  "rules": [
+    "Use reported billable units, not net invoice amounts or planning reservations.",
+    "Bundled ephemeral storage is part of the service tariff, not an account monthly free tier.",
+    "AgentCore deployment revision 10 is not pricing generation v2; the observed billing SKU uses v1 rates.",
+    "Aliyun FC and Session MCP share the same CU tariff; protocol calls and retained sessions must be attributed.",
+    "Mixed metering buckets remain intervals, never proportional per-request allocations.",
+    "Missing storage, logging, network, registry or control usage remains unknown, not zero."
+  ]
+}

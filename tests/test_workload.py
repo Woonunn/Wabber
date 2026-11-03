@@ -42,7 +42,8 @@ def trace(request="r", arrival=1, end=10, mode="resident"):
             {"object_id": "x", "operation": "write", "bytes": 4000},
         ],
     )
-    collector.spans["tool"]["resources"] = {"cpu_seconds": 0.5}
+    collector.spans["tool"]["resources"] = {"cpu_seconds": 0.5, "cpu_scope": "tool_invocation",
+                                             "cpu_complete": True}
     result = collector.snapshot()
     result.update(arrival_ns=arrival, completed_ns=end)
     return result

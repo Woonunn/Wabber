@@ -39,6 +39,10 @@ async def calibrate(workload, deployment, settings, output, plan):
     base = json.loads((ROOT / 'benchmarks/DataSciBench/config/langgraph_experiment.json').read_text())
     for provider, tasks in plan.items():
         entry = next(e for e in entries if e['provider'] == provider)
+        if settings.get('budget'):
+            from experiments.exp1.runner.static_deployment_runner import reserve_budget
+            reserve_budget(ROOT/settings['budget_ledger'],settings,provider,str(output/provider),
+                           settings['reservations']['calibration'][provider],settings['budget_policy'])
         endpoints = json.loads((ROOT / 'url_results' / Path(entry['config']).name).read_text())
         if endpoints['provider'] != provider or len(endpoints['targets']) != 1:
             raise ValueError('Expected one matching cloud target')
@@ -51,21 +55,26 @@ async def calibrate(workload, deployment, settings, output, plan):
             'execution_scope': 'E1-B environment reference; original frozen programs; independent validation',
         }}
         references['providers'][provider] = {}
-        for task_id in tasks:
-            print(json.dumps({'provider': provider, 'task_id': task_id, 'status': 'calibrating'}), flush=True)
-            directory = output / provider / task_id
-            original = ROOT / manifest['tasks'][task_id]['capture']
-            await run(task_id, config, directory, original, calibration=True)
-            references['providers'][provider][task_id] = seal_reference(directory, original, task_id, provider)
-            events = [json.loads(line) for line in read_text(directory / 'events.jsonl').splitlines()]
-            differences.append({'provider': provider, 'task_id': task_id,
-                'changes': [e for e in events if e['kind'] == 'environment_reference_difference'],
-                'original_numeric_evidence': numeric_evidence([json.loads(line) for line in read_text(original / 'events.jsonl').splitlines()]),
-                'environment_numeric_evidence': numeric_evidence(events),
-                'independent_validation': references['providers'][provider][task_id]['independent_validation']})
-            (output / 'differences.json').write_text(json.dumps(differences, indent=2) + '\n')
-            (output / 'references.json').write_text(json.dumps(references, indent=2) + '\n')
-            print(json.dumps({'provider': provider, 'task_id': task_id, 'status': 'candidate_sealed'}), flush=True)
+        concurrency=settings.get('calibration_concurrency',1)
+        if type(concurrency) is not int or not 1<=concurrency<=16:raise ValueError('Invalid calibration concurrency')
+        semaphore=asyncio.Semaphore(concurrency)
+        async def one(task_id):
+            async with semaphore:
+                print(json.dumps({'provider': provider, 'task_id': task_id, 'status': 'calibrating'}), flush=True)
+                directory = output / provider / task_id
+                original = ROOT / manifest['tasks'][task_id]['capture']
+                await run(task_id, config, directory, original, calibration=True, manifest=manifest.get('task_manifest'))
+                references['providers'][provider][task_id] = seal_reference(directory, original, task_id, provider)
+                events = [json.loads(line) for line in read_text(directory / 'events.jsonl').splitlines()]
+                differences.append({'provider': provider, 'task_id': task_id,
+                    'changes': [e for e in events if e['kind'] == 'environment_reference_difference'],
+                    'original_numeric_evidence': numeric_evidence([json.loads(line) for line in read_text(original / 'events.jsonl').splitlines()]),
+                    'environment_numeric_evidence': numeric_evidence(events),
+                    'independent_validation': references['providers'][provider][task_id]['independent_validation']})
+                (output / 'differences.json').write_text(json.dumps(differences, indent=2) + '\n')
+                (output / 'references.json').write_text(json.dumps(references, indent=2) + '\n')
+                print(json.dumps({'provider': provider, 'task_id': task_id, 'status': 'candidate_sealed'}), flush=True)
+        await asyncio.gather(*(one(task_id) for task_id in tasks))
     return references
 
 

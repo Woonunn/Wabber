@@ -21,13 +21,22 @@ CONTRACTS.update({
 })
 
 
-def build_graph(model,tools,recorder,required_outputs,max_iterations=3,seed=0):
+def build_graph(model,tools,recorder,required_outputs,max_iterations=3,seed=0,validation_contract=None,function_task=False):
     async def plan(state):
-        messages=[{'role':'system','content':PLAN_SYSTEM},{'role':'user','content':json.dumps({
+        system=PLAN_SYSTEM
+        if function_task:
+            system='''Implement the original Python function task exactly. Return JSON {"code":"complete self-contained Python source defining task_func"}. Preserve the specified signature, imports, constants and return values. Do not call the function or write harness files. The isolated Tool will call your function with prepared upstream arguments, save its actual return, and independently run the full upstream tests. No reference solutions or test inspection. Correct implementation errors from feedback. CPU/offline execution with pandas, numpy, scipy, sklearn, matplotlib, seaborn, openpyxl and statsmodels. Output JSON only.'''
+        messages=[{'role':'system','content':system},{'role':'user','content':json.dumps({
             'original_prompt':state['user_prompt'],'datasets':state['dataset_refs'],
-            'required_outputs':required_outputs,'validation_contract':CONTRACTS.get(state['task_id'],''),'feedback':state.get('feedback',''),
+            'required_outputs':required_outputs,'validation_contract':validation_contract if validation_contract is not None else CONTRACTS.get(state['task_id'],''),'feedback':state.get('feedback',''),
             'available_committed_artifacts':[{k:a[k] for k in ('name','signature','comparison')} for a in state.get('artifacts',[])]},ensure_ascii=False)}]
         decision=await model.decide('PLAN' if state['iteration']==0 else 'REPLAN',state['iteration'],messages)
+        if function_task:
+            source=decision.get('code')
+            if not isinstance(source,str) or not source.strip():raise ValueError('Missing BCB function source')
+            decision={'steps':[{'id':'function','purpose':'Implement and invoke the original function',
+                'prompt_evidence':state['user_prompt'][:160],'deps':[],
+                'outputs':required_outputs,'code':"(output_dir / 'solution.py').write_text("+repr(source)+")"}]}
         try:steps=validate_plan(decision,state['user_prompt'])
         except (ValueError,KeyError,SyntaxError) as exc:
             return {'execution_plan':[],'status':'invalid_plan' if state['iteration']+1<max_iterations else 'failed',
@@ -84,12 +93,15 @@ def build_graph(model,tools,recorder,required_outputs,max_iterations=3,seed=0):
         context={'original_prompt':state['user_prompt'],'plan':state['execution_plan'],'validation':semantic(result),
                  'errors':state.get('error'),'completed':state['completed'],
                  'tool_outputs':[{**semantic(v),'stdout':v.get('stdout','')[:3000]} for k,v in state['tool_results'].items() if k.startswith(f"i{state['iteration']}-")]}
-        decision=await model.decide('REVIEW',state['iteration'],[{'role':'system','content':REVIEW_SYSTEM},
+        review_system=REVIEW_SYSTEM+(' Choose replan for fixable implementation failures while iterations remain.' if function_task else '')
+        decision=await model.decide('REVIEW',state['iteration'],[{'role':'system','content':review_system},
             {'role':'user','content':json.dumps(context,ensure_ascii=False)}])
         verdict=decision.get('verdict')
         if verdict not in {'complete','replan','failed'}:raise ValueError('Invalid review decision')
         if verdict=='complete' and (result['status']!='ok' or state.get('error')):
             verdict='replan';decision['feedback']='Validation gate failed. '+decision.get('feedback','')
+        if function_task and (result['status']!='ok' or state.get('error')) and state['iteration']+1<max_iterations:
+            verdict='replan'
         status='complete' if verdict=='complete' else 'failed' if verdict=='failed' or state['iteration']+1>=max_iterations else 'replan'
         return {'validation':semantic(result),'evaluation_basis':result.get('evaluation_basis'),'status':status,'feedback':decision.get('feedback',''),
                 'messages':[{'role':'assistant','content':json.dumps(decision,ensure_ascii=False)}]}

@@ -88,27 +88,27 @@ class Exploration:
                 + latency_weight * c["objective_latency"]
             )
 
-        if (
-            incumbent is None
-            or incumbent["objective_cost"] is None
-            or incumbent["objective_latency"] is None
-        ):
-            return []
-        base = score(incumbent)
+        base = score(incumbent) if incumbent is not None and all(
+            incumbent[k] is not None for k in ("objective_cost", "objective_latency")
+        ) else None
         result = []
         for c in candidates:
-            if c["key"] == incumbent["key"] or c["flags"] or not c["execution_bounds"]:
-                continue
-            if (
-                c["objective_cost"] is None
-                or c["objective_latency"] is None
-                or c["currency"] != incumbent["currency"]
-            ):
-                continue
-            if c["objective_latency"] >= c["execution_bounds"]["timeout_s"]:
+            if (incumbent and c["key"] == incumbent["key"]) or c["flags"] or not c["execution_bounds"]:
                 continue
             evidence = c["evidence"]
             n, ok = evidence["attempts"], evidence["successes"]
+            if c["objective_latency"] is not None and c["objective_latency"] >= c["execution_bounds"]["timeout_s"]:
+                continue
+            if base is None or c["objective_cost"] is None or c["objective_latency"] is None:
+                if n < self.config["min_samples"]:
+                    result.append({"key": c["key"], "weight": 1 / math.sqrt(1 + n),
+                                   "reason": "bounded_cold_start", "optimistic_objective": None,
+                                   "incumbent_objective": base, "evidence": evidence})
+                continue
+            if (
+                c["currency"] != incumbent["currency"]
+            ):
+                continue
             uncertainty = self.config["optimism"] / math.sqrt(1 + n)
             optimistic = score(c) * (1 - uncertainty)
             # Failed attempts consume evidence and budget; repeatedly failing pools are not promising.
@@ -154,6 +154,8 @@ class Exploration:
         )
         if not opportunities:
             epsilon = 0.0
+        elif incumbent is None and epsilon > 0:
+            epsilon = 1.0
         probabilities = {c["key"]: 0.0 for c in candidates}
         if incumbent:
             probabilities[incumbent["key"]] = 1 - epsilon
@@ -169,7 +171,7 @@ class Exploration:
             if draw < cumulative:
                 selected = c
                 break
-        explored = bool(selected and incumbent and selected["key"] != incumbent["key"])
+        explored = bool(selected and (incumbent is None or selected["key"] != incumbent["key"]))
         return selected, {
             "strategy": self.config["strategy"],
             "config": dict(self.config),
@@ -182,13 +184,18 @@ class Exploration:
             "selection_probability": probabilities[selected["key"]] if selected else 0,
             "opportunities": opportunities,
             "remaining_budget": remaining,
+            "budget_excluded": [c["key"] for c in candidates if not c["flags"] and c["reserved_cost"] > remaining],
             "reason": next(
                 (
                     o["reason"]
                     for o in opportunities
                     if selected and o["key"] == selected["key"]
                 ),
-                "exploitation",
+                "exploration_disabled" if self.config["epsilon"] == 0
+                else "exploration_not_selected" if opportunities
+                else "exploration_budget_exhausted" if any(
+                    not c["flags"] and c["reserved_cost"] > remaining for c in candidates
+                ) else "no_exploration_opportunity",
             ),
             "predicted_objective_gain": next(
                 (
@@ -199,6 +206,9 @@ class Exploration:
                     )
                     for o in opportunities
                     if explored and o["key"] == selected["key"]
+                    and o["incumbent_objective"] is not None
+                    and selected["objective_cost"] is not None
+                    and selected["objective_latency"] is not None
                 ),
                 None,
             ),

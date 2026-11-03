@@ -54,8 +54,14 @@ def _compatible(left: dict, right: dict) -> bool:
 
 
 def _nearest(rows: list[dict], query: dict, neighbors: int) -> tuple[list[dict], dict]:
-    vectors = [r["_features"] for r in rows]
-    keys = sorted(set(query).union(*(set(v) for v in vectors)))
+    query = dict(query)
+    vectors = [dict(r["_features"]) for r in rows]
+    keys = sorted(k for k in set(query).union(*(set(v) for v in vectors)) if not k.startswith("_"))
+    for vector in [query, *vectors]:
+        if vector.get("_workflow_counts_complete"):
+            for key in keys:
+                if key.startswith(("calls:", "tool_calls:", "causal_revisits:", "edge:")):
+                    vector.setdefault(key, 0)
     ranges, missing, outside = {}, [], []
     for key in keys:
         values = [v[key] for v in vectors if number(v.get(key))]
@@ -93,6 +99,33 @@ def _nearest(rows: list[dict], query: dict, neighbors: int) -> tuple[list[dict],
         "extrapolated_features": outside,
         "nearest_distance": distance(ranked[0][1]) if ranked else None,
     }
+
+
+def target_confidence(coverage, unique_count, *, required, minimum, marginal=False) -> dict:
+    """Missing optional regressors do not invalidate observed target evidence.
+
+    Retain sample, required-feature coverage and observed-support checks. An
+    unmeasured optional feature is disclosed, never assigned a fabricated value.
+    """
+    missing = sorted({k for c in coverage for k in c["missing_features"] if k in required}
+                     | {k for c in coverage for k, v in c["feature_ranges"].items()
+                        if k in required and v["coverage"] < 1})
+    outside = sorted({k for c in coverage for k in c["extrapolated_features"]})
+    optional = sorted({k for c in coverage for k in c["missing_features"] if k not in required}
+                      | {k for c in coverage for k, v in c["feature_ranges"].items()
+                         if k not in required and v["coverage"] < 1})
+    reasons = []
+    if not coverage or unique_count < minimum:
+        reasons.append("sample_insufficient")
+    if missing:
+        reasons.append("metric_missing")
+    if outside:
+        reasons.append("distribution_outside_support")
+    if marginal:
+        reasons.append("joint_profile_missing")
+    return {"reliable": not reasons, "reasons": reasons, "required_metrics": sorted(required),
+            "missing_metrics": missing, "optional_missing": optional,
+            "outside_support": outside, "unique_samples": unique_count, "minimum_samples": minimum}
 
 
 def _target_profiles(
@@ -454,7 +487,7 @@ class ProviderModel:
                 if card
                 else None
             )
-            if analytical and analytical["complete"]:
+            if analytical and analytical["complete"] and analytical["calibrated"]:
                 # Mix complete latency samples; never add component percentiles.
                 # Native Session durations already include their observed waiting time.
                 queue = (
@@ -469,6 +502,29 @@ class ProviderModel:
                     v + q for v in analytical["latency"]["samples"] for q in queue
                 ]
                 metrics["latency_s"] = _distribution(latency, len(latency))
+            unique_count = len({r["id"] for r in selected})
+            minimum = 3 if analytical else 20
+            latency_confidence = target_confidence(
+                coverage, unique_count, required={"tool_elapsed_s", "llm_idle_s", "parallel_peak", "load_rps"},
+                minimum=minimum, marginal=marginal,
+            )
+            cost_required = {"tool_elapsed_s", "parallel_peak", "load_rps"}
+            if card and card["cpu_basis"] == "active" and card["rates"]["cpu_s"]:
+                cost_required.add("tool_cpu_s")
+            cost_confidence = target_confidence(
+                coverage, unique_count, required=cost_required, minimum=minimum, marginal=marginal,
+            )
+            cost_confidence["missing_cost_evidence"] = analytical["missing"] if analytical else []
+            if analytical and (not analytical["complete"] or not analytical["calibrated"]):
+                cost_confidence["reasons"].append("cost_evidence_insufficient")
+            elif not analytical and not any(c["complete"] and c["total"]["n"] >= minimum for c in costs):
+                cost_confidence["reasons"].append("cost_evidence_insufficient")
+            cost_confidence["reliable"] = not cost_confidence["reasons"]
+            latency_evidence = len({r["id"] for r in selected if number(r["measurements"].get("latency_s"))})
+            latency_confidence["measured_target_samples"] = latency_evidence
+            if latency_evidence < minimum:
+                latency_confidence["reasons"].append("latency_evidence_insufficient")
+                latency_confidence["reliable"] = False
             results.append(
                 {
                     "pool": copy.deepcopy(pool),
@@ -484,23 +540,8 @@ class ProviderModel:
                     "sample_count": len(successes),
                     "selected_unique_count": len({r["id"] for r in selected}),
                     "coverage": coverage,
-                    "low_confidence": marginal
-                    or not coverage
-                    or len({r["id"] for r in selected}) < (3 if analytical else 20)
-                    or any(
-                        set(c["missing_features"]) - {"instances"}
-                        or c["extrapolated_features"]
-                        or any(
-                            v["coverage"] < 1
-                            for k, v in c["feature_ranges"].items()
-                            if k != "instances"
-                        )
-                        for c in coverage
-                    )
-                    or bool(
-                        analytical
-                        and (not analytical["complete"] or not analytical["calibrated"])
-                    ),
+                    "confidence": {"latency": latency_confidence, "cost": cost_confidence},
+                    "low_confidence": not (latency_confidence["reliable"] and cost_confidence["reliable"]),
                     "latency_scope": "successful requests, observed queue/cold-start mixture; no additive p95",
                     "cost_missing": not analytical["complete"]
                     if analytical

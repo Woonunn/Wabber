@@ -45,13 +45,14 @@ class RuntimeConfig:
 @dataclass(frozen=True)
 class BuildConfig:
     python_version: str = ""
+    base_image: str = ""
 
     @classmethod
     def from_dict(cls, payload: Optional[Mapping[str, Any]], fallback: Optional["BuildConfig"] = None) -> "BuildConfig":
         base = fallback or cls()
         data = dict(payload or {})
         python_version = str(data.get("python_version", base.python_version)).strip() or base.python_version
-        return cls(python_version=python_version)
+        return cls(python_version=python_version, base_image=str(data.get("base_image", base.base_image)).strip())
 
 
 @dataclass(frozen=True)

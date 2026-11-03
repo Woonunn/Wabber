@@ -1,0 +1,9 @@
+FROM python:3.12.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c
+COPY experiments/exp1/profile/requirements.mix.txt /tmp/requirements.txt
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+COPY benchmarks/DataSciBench/nodes/AgentTools/bcb_checks.py benchmarks/DataSciBench/nodes/AgentTools/sandbox_worker.py benchmarks/DataSciBench/nodes/AgentTools/result_checks.py benchmarks/DataSciBench/nodes/AgentTools/extended_checks.py benchmarks/DataSciBench/nodes/AgentTools/logical_state.py benchmarks/DataSciBench/nodes/AgentTools/resident_kernel.py benchmarks/DataSciBench/nodes/DataSci/kernel.py /opt/wabber/
+COPY benchmarks/DataSciBench/tasks/mix/runtime_checks.json.gz /opt/wabber/bcb_cases.json.gz
+ENV HOME=/tmp OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 MPLCONFIGDIR=/tmp/matplotlib PYTHONHASHSEED=0 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /work
+USER 65532:65532
+ENTRYPOINT ["python", "/opt/wabber/sandbox_worker.py"]

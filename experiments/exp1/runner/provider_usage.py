@@ -49,8 +49,15 @@ class BatchCloudWatch(AWSCloudWatch):
             if not groups:raise RuntimeError('No AgentCore usage log group: '+runtime_id)
             events=[]
             for group in groups:events.extend(self._filter_log_group_events(group,start_time,end_time))
-            self._usage_groups[key]=events
-        return session_usage(self._usage_groups[key],session_id)
+            # Index once: a long run must not reparse every other Session's usage.
+            by_session={}
+            for event in events:
+                try:payload=json.loads(event.get('message',''))
+                except (ValueError,TypeError):continue
+                sid=payload.get('attributes',{}).get('session.id')
+                if sid:by_session.setdefault(sid,[]).append(event)
+            self._usage_groups[key]=by_session
+        return session_usage(self._usage_groups[key].get(session_id,[]),session_id)
 
 
 def collect_ali(context, invocations):

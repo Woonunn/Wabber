@@ -10,6 +10,8 @@ METRICS = (
     "execution_active_s",
     "runtime_tool_s",
     "tool_cpu_s",
+    "tool_cpu_measured_s",
+    "tool_cpu_coverage",
     "state_observation_s",
     "agent_elapsed_s",
     "state_bytes",
@@ -110,8 +112,16 @@ def extract_profile(trace: dict) -> dict:
     if complete and all(number(v) for v in overhead):
         metrics["state_observation_s"] = sum(overhead)
     cpu = [(s.get("resources") or {}).get("cpu_seconds") for s in tools]
-    if complete and all(number(v) for v in cpu):
-        metrics["tool_cpu_s"] = sum(cpu)
+    measured_cpu = [v for v in cpu if number(v)]
+    metrics["tool_cpu_measured_s"] = sum(measured_cpu) if measured_cpu else None
+    metrics["tool_cpu_coverage"] = len(measured_cpu) / len(tools) if tools else None
+    cpu_complete = complete and bool(tools) and len(measured_cpu) == len(tools) and all(
+        (s.get("resources") or {}).get("cpu_complete") is True
+        and (s.get("resources") or {}).get("cpu_scope") == "tool_invocation"
+        for s in tools
+    )
+    if cpu_complete:
+        metrics["tool_cpu_s"] = sum(measured_cpu)
     state_spans = tools + [
         s for s in sessions if s.get("metadata", {}).get("checkpointing")
     ]
@@ -232,6 +242,14 @@ def extract_profile(trace: dict) -> dict:
         "arrival_ns": trace.get("arrival_ns"),
         "completed_ns": trace.get("completed_ns"),
         "source": trace.get("source", "trace"),
+        "cpu_observation": {
+            "measured_calls": len(measured_cpu), "total_calls": len(tools),
+            "complete": cpu_complete,
+            "scopes": dict(Counter((s.get("resources") or {}).get("cpu_scope", "legacy_unspecified")
+                                   for s, value in zip(tools, cpu) if number(value))),
+            "missing_calls": [s["id"] for s, value in zip(tools, cpu) if not number(value)],
+            "basis": "One non-overlapping counter per call; subtotal is not provider billable CPU",
+        },
         "metrics": metrics,
         "missing": missing,
         "workflow": {

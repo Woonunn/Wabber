@@ -233,6 +233,8 @@ def create_handler() -> Type[BaseHTTPRequestHandler]:
                 try:
                     result = TOOLS[tool_name].execute_from_dict(args)
                 finally:
+                    from atsuite_sdk.resources import get_resource_usage
+                    response_metadata["resource_usage"] = get_resource_usage()
                     request_ctx["tool_end_ns"] = _now_ns()
                     request_ctx["state_sync_overhead_ms"] = (
                         get_state_runtime().get_sync_metrics().get("total_ms", 0.0)

@@ -21,6 +21,11 @@ from experiments.exp1.runner.result_collector import collect_local, read_events
 RENDERING_POLICY = ROOT / 'experiments/exp1/configs/e1a_rendering_equivalence.json'
 
 
+def rendering_hash(workload):
+    manifest=json.loads((Path(workload)/'manifest.json').read_text())
+    return None if manifest.get('task_manifest') else sha(RENDERING_POLICY)
+
+
 def pilot_rows(rows):
     """Keep the first original arrival for every task, without changing its timing."""
     selected = {}
@@ -54,7 +59,7 @@ def validate_pilots(directory, workload, deployment, task_ids, references=None, 
         if (not info['pilot'] or info['provider'] != provider
                 or info['workload_manifest_sha256'] != sha(workload / 'manifest.json')
                 or (info['deployment_manifest_sha256'] != sha(deployment) and not unchanged_provider)
-                or info['rendering_policy_sha256'] != sha(RENDERING_POLICY)
+                or info['rendering_policy_sha256'] != rendering_hash(workload)
                 or info.get('environment_references', {}) != (references or {}).get(provider, {})):
             raise ValueError('Pilot belongs to another workload or deployment')
         records = read_events(run / 'request_metrics.jsonl')
@@ -108,21 +113,24 @@ def validate_pilots(directory, workload, deployment, task_ids, references=None, 
     return evidence
 
 
-async def execute(workload, deployment, settings, output, *, pilot=False, pilots=None, references=None, reuse_pilots=None):
+async def execute(workload, deployment, settings, output, *, pilot=False, pilots=None, references=None, reuse_pilots=None, providers=None):
     workload, deployment, output = map(lambda p: Path(p).resolve(), (workload, deployment, output))
     manifest, sealed = load(workload)
     config = manifest['config']
     references = load_references(references, manifest, deployment)
     if reuse_pilots is not None and not pilot:
         raise ValueError("Pilot reuse is only allowed in Pilot mode")
-    rendering = json.loads(RENDERING_POLICY.read_text())
-    if manifest['tasks'][rendering['task_id']]['capture_files']['events.jsonl'] != rendering['capture_events_sha256']:
+    rendering = ({'task_id':None,'evidence':[],'approved_renderings':{}}
+                 if manifest.get('task_manifest') else json.loads(RENDERING_POLICY.read_text()))
+    if rendering['task_id'] is not None and manifest['tasks'][rendering['task_id']]['capture_files']['events.jsonl'] != rendering['capture_events_sha256']:
         raise ValueError('Rendering policy belongs to a different Capture')
     for item in rendering['evidence']:
         if sha(ROOT / item['path']) != item['sha256']:
             raise ValueError('Rendering calibration evidence changed')
-    if list(config['scenarios']) != ['fixed'] or config['window_roles'] != ['typical']:
+    if not manifest.get('task_manifest') and (list(config['scenarios']) != ['fixed'] or config['window_roles'] != ['typical']):
         raise ValueError('This E1-B run requires fixed + typical')
+    if len(config['scenarios'])!=1 or len(config['window_roles'])!=1:
+        raise ValueError('Select one sealed scenario and window per cloud matrix')
     entries = json.loads(deployment.read_text())['results']
     if len(entries) != len(PROVIDERS) or {e['provider'] for e in entries} != set(PROVIDERS):
         raise ValueError('All four audited deployments are required')
@@ -131,6 +139,10 @@ async def execute(workload, deployment, settings, output, *, pilot=False, pilots
     order = manifest['groups'][0]['provider_order']
     if len(order) != len(PROVIDERS) or set(order) != set(PROVIDERS):
         raise ValueError('Invalid sealed provider order')
+    if providers is not None:
+        if not providers or len(set(providers))!=len(providers) or not set(providers)<=set(order):
+            raise ValueError('Invalid provider subset')
+        order=[p for p in order if p in providers]
     evidence = []
     if not pilot:
         if pilots is None:
@@ -150,10 +162,11 @@ async def execute(workload, deployment, settings, output, *, pilot=False, pilots
         'deployment_manifest_sha256': sha(deployment), 'pilot_evidence': evidence,
         'budget_policy': settings['budget_policy'], 'actual_cost': None,
         'runtime_settings': settings, 'environment_references': references,
-        'rendering_policy': rendering, 'rendering_policy_sha256': sha(RENDERING_POLICY),
+        'rendering_policy': rendering, 'rendering_policy_sha256': rendering_hash(workload),
     }, indent=2) + '\n')
     base = json.loads((ROOT / 'benchmarks/DataSciBench/config/langgraph_experiment.json').read_text())
-    concurrency = 1 if pilot else settings['harness_concurrency']
+    concurrency = settings.get('pilot_concurrency',1) if pilot else settings['harness_concurrency']
+    if type(concurrency) is not int or concurrency<1:raise ValueError('Invalid harness concurrency')
     asyncio.get_running_loop().set_default_executor(ThreadPoolExecutor(
         max_workers=concurrency * (base['max_parallel'] + 1), thread_name_prefix='e1b-rpc'))
     try:
@@ -161,6 +174,12 @@ async def execute(workload, deployment, settings, output, *, pilot=False, pilots
             provider = group['provider']
             entry = next(e for e in entries if e['provider'] == provider)
             directory = output / provider
+            if settings.get('budget'):
+                from experiments.exp1.runner.static_deployment_runner import reserve_budget
+                reservation=reserve_budget(ROOT/settings['budget_ledger'],settings,provider,str(directory),
+                    settings['reservations']['pilot' if pilot else 'formal'][provider],
+                    settings['budget_policy'])
+                group['reservation']=reservation;save()
             if reuse_pilots is not None and (Path(reuse_pilots) / provider / 'run.json').exists():
                 try:
                     reused = validate_pilots(Path(reuse_pilots), workload, deployment,
@@ -183,19 +202,23 @@ async def execute(workload, deployment, settings, output, *, pilot=False, pilots
                     'expected_implementation_sha256': next(v for k, v in entry['image']['source_sha256'].items()
                                                            if k.endswith('/implementation.py')),
                     'execution_scope': 'E1-B real cloud computation; sealed model decisions and recorded waits'}
-            info = {'experiment': 'E1-B', 'provider': provider, 'scenario': 'fixed', 'window_role': 'typical',
+            info = {'experiment': manifest.get('experiment','E1-B'), 'provider': provider,
+                    'scenario':next(iter(config['scenarios'])), 'window_role':config['window_roles'][0],
                     'sequence_seed': config['seed'], 'pilot': pilot, 'validation_only': False,
                     'duration_ms': duration, 'time_scale': 1.0, 'requests': len(rows),
                     'workload': str(workload), 'workload_manifest_sha256': sha(workload / 'manifest.json'),
                     'request_table_sha256': manifest['request_table_sha256'],
                     'deployment': entry, 'deployment_manifest_sha256': sha(deployment),
-                    'rendering_policy_sha256': sha(RENDERING_POLICY),
+                    'rendering_policy_sha256': rendering_hash(workload),
                     'environment_references': references.get(provider, {}),
                     'endpoint_map_sha256': sha(endpoint_path), 'started_epoch': time.time(),
                     'harness_concurrency': concurrency, 'budget_policy': settings['budget_policy']}
             (directory / 'run.json').write_text(json.dumps(info, indent=2) + '\n')
             write_csv(directory / 'planned_requests.csv', rows)
             by_id = {r['arrival_id']: r for r in rows}
+            offered = {}
+            def observe(event):
+                if event['kind']=='request_submitted':offered[event['arrival_id']]=event['wall_ns']
             failed = False
             async def handler(arrival, started):
                 nonlocal failed
@@ -210,7 +233,8 @@ async def execute(workload, deployment, settings, output, *, pilot=False, pilots
                     graph_config['tool'] = {**tool, 'approved_renderings': rendering['approved_renderings']}
                 try:
                     return await replay(row['task_id'], graph_config, directory / 'requests' / arrival.arrival_id,
-                                        Path(reference['capture']) if reference else ROOT / manifest['tasks'][row['task_id']]['capture'])
+                                        Path(reference['capture']) if reference else ROOT / manifest['tasks'][row['task_id']]['capture'],
+                                        manifest=manifest.get('task_manifest'),arrival_ns=offered[arrival.arrival_id])
                 except BaseException:
                     failed = True
                     raise
@@ -220,7 +244,7 @@ async def execute(workload, deployment, settings, output, *, pilot=False, pilots
             try:
                 summary = await run_open_loop(arrivals, handler, directory / 'schedule', duration_ms=duration,
                                              concurrency=concurrency, queue_capacity=config['queue_capacity'],
-                                             time_scale=1.0, metadata=info)
+                                             time_scale=1.0, metadata=info, observer=observe)
             finally:
                 if (directory / 'schedule/summary.json').exists():
                     collect_local(directory)
@@ -246,7 +270,8 @@ async def main(args):
     try:
         settings = yaml.safe_load(args.config.read_text())
         return await execute(args.workload, args.deployment, settings, args.output,
-                             pilot=args.pilot, pilots=args.pilots, references=args.references, reuse_pilots=args.reuse_pilots)
+                             pilot=args.pilot, pilots=args.pilots, references=args.references, reuse_pilots=args.reuse_pilots,
+                             providers=args.provider)
     finally:
         loop.remove_signal_handler(signal.SIGTERM)
 
@@ -259,6 +284,7 @@ if __name__ == '__main__':
     parser.add_argument('--pilots', type=Path)
     parser.add_argument('--references', type=Path)
     parser.add_argument('--reuse-pilots', type=Path)
+    parser.add_argument('--provider', action='append')
     args = parser.parse_args()
     load_dotenv(ROOT / '.env')
     print(json.dumps(asyncio.run(main(args)), indent=2))

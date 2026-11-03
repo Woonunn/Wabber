@@ -654,11 +654,16 @@ class JointController:
             return plan
         if plan is None:
             if not self.probe:
-                return None
-            plan = {
-                "targets": {k: s.target for k, s in self.snapshots.items()},
-                "weights": self.probe["restore_weights"],
-            }
+                default = self.router.default_pool
+                if default is None or any(s.target not in self.levels[k] for k, s in self.snapshots.items()):
+                    return None
+                plan = {"targets": {k: s.target for k, s in self.snapshots.items()},
+                        "weights": {k: float(k == default) for k in self.pools}}
+            else:
+                plan = {
+                    "targets": {k: s.target for k, s in self.snapshots.items()},
+                    "weights": self.probe["restore_weights"],
+                }
         plan = copy.deepcopy(plan)
         router = self.router
         if self.probe:

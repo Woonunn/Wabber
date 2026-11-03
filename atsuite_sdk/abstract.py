@@ -3,6 +3,7 @@ import asyncio
 from typing import Any, Callable, Dict, Optional, Type, get_type_hints
 from pydantic import BaseModel, create_model
 from functools import wraps
+from atsuite_sdk.resources import observe_call
 
 class UnifiedAgentTool:
     """
@@ -69,6 +70,7 @@ class UnifiedAgentTool:
             "inputSchema": self.parameters_schema
         }
 
+    @observe_call()
     def execute_from_dict(self, args_dict: Dict[str, Any]) -> Any:
         """通用执行入口，接受字典参数（适用于 MCP 和 FaaS 的 JSON Body）"""
         call_args = dict(args_dict)

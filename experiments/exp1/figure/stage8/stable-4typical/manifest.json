@@ -1,0 +1,10 @@
+{
+  "sources_sha256": {
+    "results/stage8/cloud-stable-4typical-v1/formal-aws_lambda/aws_lambda/request_metrics.jsonl": "6d8b10784d1b797fdbfffb4867658478531c2b55abeddf021ee3a46c58220027",
+    "results/stage8/cloud-stable-4typical-v1/formal-aws_agentcore/aws_agentcore/request_metrics.jsonl": "8003639c77b15642754132b83a808bde8742c2da83669b48dd9997845c6a564c",
+    "results/stage8/cloud-stable-4typical-v1/formal-ali_fc/ali_fc/request_metrics.jsonl": "0951884405291ed7964d1ea5278303b1383997d87fb0426784bfbd5d616468cd",
+    "results/stage8/cloud-stable-4typical-v1/formal-ali_agentrun/ali_agentrun/request_metrics.jsonl": "80f97450aaa283d366809edd984fdf5eff4784e91c4199a8474279afc0a89130"
+  },
+  "scope": "Fixed-provider baselines; real Tool computation and recorded LLM waits; no online router convergence claim",
+  "actual_total_cost": null
+}

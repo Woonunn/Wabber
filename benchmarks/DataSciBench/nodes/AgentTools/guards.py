@@ -1,6 +1,7 @@
 import os
 from pathlib import PurePosixPath
 import re
+import stat
 
 
 def identifier(value):
@@ -21,9 +22,14 @@ def relative_file(value):
 def safe_files(root,aliases=None):
     result=[];total=0
     for p in root.rglob('*'):
-        if p.is_symlink() and aliases and aliases.get(p.relative_to(root).as_posix())==os.readlink(p):continue
-        if p.is_symlink() or (not p.is_file() and not p.is_dir()):raise ValueError('Sandbox produced a link or special file')
-        if p.is_file():
-            total+=p.stat().st_size;result.append(p)
+        try:
+            info=p.lstat()
+            if stat.S_ISLNK(info.st_mode) and aliases and aliases.get(p.relative_to(root).as_posix())==os.readlink(p):continue
+        except FileNotFoundError:
+            # A running test may remove a temporary fixture after directory enumeration.
+            continue
+        if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):raise ValueError('Sandbox produced a link or special file')
+        if stat.S_ISREG(info.st_mode):
+            total+=info.st_size;result.append(p)
     if total>1024**3 or len(result)>256:raise ValueError('Sandbox output quota exceeded')
     return result

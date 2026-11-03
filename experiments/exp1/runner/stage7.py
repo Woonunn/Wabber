@@ -222,6 +222,12 @@ def compare(reports: list[dict]) -> dict:
         raise ValueError("A no-exploration cost_aware baseline is required")
     if len({r["strategy"] for r in reports}) != len(reports):
         raise ValueError("Use one independently executed run per strategy and seed")
+    fixed = [r for r in reports if r["strategy"].startswith("fixed_")]
+    best_fixed = min(fixed, key=lambda r: r["cost"]["total"]) if (
+        {r["strategy"] for r in fixed} == {s for s in STRATEGIES if s.startswith("fixed_")}
+        and all(r["cost"]["complete"] and r["cost"]["basis"] in {"actual", "estimated"} for r in fixed)
+        and len({(r["cost"]["currency"], r["cost"]["basis"]) for r in fixed}) == 1
+    ) else None
     comparisons = []
     for report in reports:
         a, b = baseline["cost"], report["cost"]
@@ -240,6 +246,10 @@ def compare(reports: list[dict]) -> dict:
                 "cost_saving_vs_no_exploration": a["total"] - b["total"]
                 if comparable
                 else None,
+                "cost_saving_vs_best_fixed": best_fixed["cost"]["total"] - b["total"]
+                if best_fixed and b["complete"] and (b["currency"], b["basis"]) == (
+                    best_fixed["cost"]["currency"], best_fixed["cost"]["basis"]
+                ) else None,
                 "p95_reduction_s": am["p95_s"] - bm["p95_s"]
                 if am.get("p95_s") is not None and bm.get("p95_s") is not None
                 else None,
@@ -250,6 +260,7 @@ def compare(reports: list[dict]) -> dict:
         )
     return {
         "baseline": "cost_aware",
+        "best_fixed_provider": best_fixed["strategy"] if best_fixed else None,
         "workload_sha256": baseline["workload_sha256"],
         "comparisons": comparisons,
         "scope": "Differences between complete matched runs; report failures and repeat across seeds, not per-request counterfactuals",

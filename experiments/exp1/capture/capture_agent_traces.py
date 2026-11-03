@@ -13,7 +13,7 @@ from benchmarks.DataSciBench.langgraph_agent.trace_replayer import ReplayModel
 ROOT=Path(__file__).resolve().parents[3]
 
 
-async def run(task_id,config,output,capture=None,workload_model=None,provider_model=None,provider_context=None,*,calibration=False,router=None,routing_context=None,prompt=None):
+async def run(task_id,config,output,capture=None,workload_model=None,provider_model=None,provider_context=None,*,calibration=False,router=None,routing_context=None,prompt=None,manifest=None,arrival_ns=None):
     if router is not None:
         if workload_model is not None or provider_model is not None:
             raise ValueError('Router owns both model completion hooks')
@@ -37,7 +37,7 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
         validate_pool(provider_context['pool'])
         if provider_context['pool']['provider']!=config['tool']['provider']:raise ValueError('Provider context does not match Tool backend')
         features(provider_context.get('reference_profile',{}),provider_context['pool'],provider_context['load_rps'])
-    tasks=json.loads((ROOT/'benchmarks/DataSciBench/tasks/manifest.json').read_text())
+    tasks=json.loads(Path(manifest or ROOT/'benchmarks/DataSciBench/tasks/manifest.json').read_text())
     task=next(t for t in tasks['tasks'] if t['task_id']==task_id)
     if prompt is not None:
         import hashlib
@@ -52,7 +52,7 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
     initial={'request_id':request_id,'session_id':session_id,'task_id':task_id,'user_prompt':task['prompt'],
          'messages':[],'workspace_id':'','dataset_refs':[{k:f[k] for k in ('name','sha256','bytes')} for f in task['readiness']['inputs']['files']],
          'execution_plan':[],'tool_results':{},'artifacts':[],'iteration':0,'status':'new','error':None,'completed':[],'snapshot':0}
-    arrival_ns=time.time_ns()
+    arrival_ns=time.time_ns() if arrival_ns is None else arrival_ns
     if router is not None:arrival_ns=routing_context.get('arrival_ns',arrival_ns)
     if workload_model is not None:
         from atsuite.tracing.storage import write_json
@@ -80,8 +80,8 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
         recorder.emit('run_start',mode='environment_reference' if calibration else 'replay' if capture else 'capture',task_id=task_id,prompt_sha256=task['prompt_sha256'],
              config=config,source_capture=str(capture) if capture else None,execution_scope=config['tool']['execution_scope'])
         tools=await asyncio.to_thread(ToolClient,config['tool'],recorder,capture,calibration)
-        model=ReplayModel(capture,recorder,tools.comparable if tools.renderings else None,calibration) if capture else DeepSeekClient(recorder,config['model'])
-        graph=build_graph(model,tools,recorder,task['output_files'],config['max_iterations'],config['model']['seed'])
+        model=ReplayModel(capture,recorder,tools.comparable,calibration) if capture else DeepSeekClient(recorder,config['model'])
+        graph=build_graph(model,tools,recorder,task['output_files'],config['max_iterations'],config['model']['seed'],task.get('validation_contract'),task.get('task_type')=='bcb')
         timeout=config.get('session_timeout_s',900)
         if router is not None and decision.get('execution_bounds'):
             timeout=min(timeout,decision['execution_bounds']['timeout_s']-(time.time_ns()-arrival_ns)/1e9)
@@ -129,6 +129,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--task',required=True)
     p.add_argument('--config',type=Path,default=ROOT/'benchmarks/DataSciBench/config/langgraph_experiment.json')
     p.add_argument('--output',type=Path);p.add_argument('--replay',type=Path)
+    p.add_argument('--manifest',type=Path,help='Independent prepared task manifest (default: six-task manifest)')
     p.add_argument('--workload-model',type=Path,help='Load/update an empirical workload snapshot')
     p.add_argument('--provider-model',type=Path,help='Load/update provider observations at request completion')
     p.add_argument('--provider-context',type=Path,help='JSON pool, load_rps and optional fixed reference_profile')
@@ -142,7 +143,7 @@ def main():
     provider_model=(ProviderModel.load(a.provider_model) if trace_path(a.provider_model).exists() else ProviderModel()) if a.provider_model else None
     provider_context=json.loads(a.provider_context.read_text()) if a.provider_context else None
     try:
-        print(json.dumps(asyncio.run(run(a.task,config,output,a.replay,model,provider_model,provider_context)),ensure_ascii=False))
+        print(json.dumps(asyncio.run(run(a.task,config,output,a.replay,model,provider_model,provider_context,manifest=a.manifest)),ensure_ascii=False))
     finally:
         if model is not None:model.save(a.workload_model)
         if provider_model is not None:provider_model.save(a.provider_model)

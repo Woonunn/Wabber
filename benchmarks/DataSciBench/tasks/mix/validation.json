@@ -1,0 +1,188 @@
+{
+  "candidate_count": 172,
+  "agent_verified_count": 100,
+  "reference_verified_count": 100,
+  "local_arrivals": {
+    "status": "complete",
+    "error": null,
+    "metadata": {
+      "sequence_sha256": "292f81e90f92a3dcdf8ec31b1c5aacc6030d9edde87fe70a6c793c0c7209d13c",
+      "prefix_ms": 30000,
+      "scope": "Real local Tool replay and online updates; no cross-provider cost claim"
+    },
+    "planned": 4,
+    "submitted": 4,
+    "accepted": 4,
+    "started": 4,
+    "terminal_counts": {
+      "succeeded": 4
+    },
+    "unaccounted_requests": 0,
+    "submission_loss_rate": 0.0,
+    "failure_or_rejection_rate": 0.0,
+    "time_scale": 1.0,
+    "scenario_type": "Original Trace",
+    "planned_duration_ms": 30000.0,
+    "actual_observation_ms": 30001.506256,
+    "actual_total_ms": 30489.011984,
+    "drain_after_window_ms": 487.505728,
+    "peak_active": 3,
+    "peak_queue_depth": 2,
+    "submission_lateness_ms": {
+      "count": 4,
+      "mean": 1.7140585,
+      "p50": 1.3810034999999998,
+      "p95": 3.0023113499999994,
+      "p99": 3.21219027,
+      "max": 3.26466
+    },
+    "harness_start_lateness_ms": {
+      "count": 4,
+      "mean": 4.3090205,
+      "p50": 2.657268,
+      "p95": 9.685432449999997,
+      "p99": 10.536834489999997,
+      "max": 10.749685
+    },
+    "queue_wait_to_harness_ms": {
+      "count": 4,
+      "mean": 2.594962,
+      "p50": 0.40176900000000004,
+      "p95": 7.910943099999997,
+      "p99": 8.969401419999999,
+      "max": 9.234016
+    }
+  },
+  "synthetic_checks": {
+    "reports": [
+      {
+        "composition": "stable",
+        "policy": "routing",
+        "completed": 300,
+        "exploration": {
+          "admitted": 300,
+          "selection_counts": {
+            "cheap": 30,
+            "fast": 270
+          },
+          "selection_proportions": {
+            "cheap": 0.1,
+            "fast": 0.9
+          },
+          "exploration_attempts": 21,
+          "exploration_completed": 21,
+          "exploration_successes": 21,
+          "exploration_accounted_cost": 0.000375600524994466,
+          "exploration_execution_cost_by_basis": {
+            "synthetic_usage_estimate": 0.00037560052499446595
+          },
+          "capacity_reserved": {},
+          "budget_spent_or_capped": 0.009042181736804886,
+          "total_infrastructure_actual_cost": null,
+          "realized_counterfactual_gain": null,
+          "scope": "Decision/feedback evidence; capacity caps are not bills; benefit requires matched policy runs"
+        }
+      },
+      {
+        "composition": "stable",
+        "policy": "joint",
+        "completed": 300,
+        "exploration": {
+          "admitted": 300,
+          "selection_counts": {
+            "cheap": 255,
+            "fast": 45
+          },
+          "selection_proportions": {
+            "cheap": 0.85,
+            "fast": 0.15
+          },
+          "exploration_attempts": 45,
+          "exploration_completed": 45,
+          "exploration_successes": 45,
+          "exploration_accounted_cost": 0.0012842687707553114,
+          "exploration_execution_cost_by_basis": {
+            "synthetic_usage_estimate": 0.0012842687707553114
+          },
+          "capacity_reserved": {},
+          "budget_spent_or_capped": 0.010466485157027626,
+          "total_infrastructure_actual_cost": null,
+          "realized_counterfactual_gain": null,
+          "scope": "Decision/feedback evidence; capacity caps are not bills; benefit requires matched policy runs"
+        }
+      },
+      {
+        "composition": "shift",
+        "policy": "routing",
+        "completed": 300,
+        "exploration": {
+          "admitted": 300,
+          "selection_counts": {
+            "cheap": 24,
+            "fast": 276
+          },
+          "selection_proportions": {
+            "cheap": 0.08,
+            "fast": 0.92
+          },
+          "exploration_attempts": 25,
+          "exploration_completed": 25,
+          "exploration_successes": 25,
+          "exploration_accounted_cost": 0.0003812671502123232,
+          "exploration_execution_cost_by_basis": {
+            "synthetic_usage_estimate": 0.000381267150212323
+          },
+          "capacity_reserved": {},
+          "budget_spent_or_capped": 0.010484150948344996,
+          "total_infrastructure_actual_cost": null,
+          "realized_counterfactual_gain": null,
+          "scope": "Decision/feedback evidence; capacity caps are not bills; benefit requires matched policy runs"
+        }
+      },
+      {
+        "composition": "shift",
+        "policy": "joint",
+        "completed": 300,
+        "exploration": {
+          "admitted": 300,
+          "selection_counts": {
+            "cheap": 262,
+            "fast": 38
+          },
+          "selection_proportions": {
+            "cheap": 0.8733333333333333,
+            "fast": 0.12666666666666668
+          },
+          "exploration_attempts": 38,
+          "exploration_completed": 38,
+          "exploration_successes": 38,
+          "exploration_accounted_cost": 0.0011712685845843007,
+          "exploration_execution_cost_by_basis": {
+            "synthetic_usage_estimate": 0.0011712685845843007
+          },
+          "capacity_reserved": {},
+          "budget_spent_or_capped": 0.012404454789101125,
+          "total_infrastructure_actual_cost": null,
+          "realized_counterfactual_gain": null,
+          "scope": "Decision/feedback evidence; capacity caps are not bills; benefit requires matched policy runs"
+        }
+      }
+    ],
+    "scope": "Synthetic mechanism validation with empty history; not the formal 100-Prompt E2 experiment or a cloud saving"
+  },
+  "unit_tests": {
+    "run": 294,
+    "skipped": 1,
+    "status": "passed"
+  },
+  "cloud_e2_executed": false,
+  "total_infrastructure_actual_cost": null,
+  "savings_vs_best_fixed_provider": null,
+  "rebuilt_image": {
+    "id": "sha256:58d925a5af9a0974132bbabf3d37bf88a00f7e34108212923d3c323894013a39",
+    "strict_replay_task": "bcb1011",
+    "strict_replay_status": "complete",
+    "dockerfile_sha256": "11ac7dab8d8fc625848ed9dd64298d4193b1ab2d71efff6e1e56e9bf9a5f2362",
+    "requirements_sha256": "37e3f0745aa657e7d31be1e16da75a0ab07e09050fbc12b2ac7631ae76ae33db"
+  }
+}

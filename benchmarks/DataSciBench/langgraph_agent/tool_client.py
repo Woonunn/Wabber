@@ -1,4 +1,4 @@
-import asyncio,json,time,uuid
+import asyncio,json,re,time,uuid
 from pathlib import Path
 from atsuite.runtime import InvocationRequest,create_runtime_adapter
 from atsuite.tracing.storage import read_text
@@ -7,10 +7,30 @@ from atsuite.tracing.storage import read_text
 class DivergenceError(RuntimeError):pass
 
 
+def bcb_error(value):
+    """Keep every failed test and assertion; omit unittest timing and incidental stack frames."""
+    if not isinstance(value,str) or not value.startswith('Independent BCB tests failed:'):
+        return value
+    lines=[];stack=False
+    for line in value.splitlines():
+        if line.startswith('Traceback (most recent call last):'):
+            stack=True;continue
+        if stack:
+            if not re.match(r'^[A-Za-z_]\w*(?:Error|Exception):',line):continue
+            stack=False
+        if re.match(r'^Ran \d+ tests? in [\d.]+s$',line):continue
+        lines.append(line)
+    return '\n'.join(lines)
+
+
 def semantic(result):
     """Only control-significant output; timing and provider IDs are measured anew."""
     if not isinstance(result,dict):raise ValueError('Tool must return structured JSON')
     fields={k:result[k] for k in ('status','error_type','error','snapshot','checks','state_signature','state_names','branch_ref','step_id','inputs') if k in result}
+    if 'error' in fields:fields['error']=bcb_error(fields['error'])
+    if (fields.get('error_type')=='LookupError' and 'Attempted to load' in fields.get('error','')
+            and 'https://www.nltk.org/data.html' in fields['error']):
+        fields['error']=fields['error'].split('\n  Searched in:',1)[0].rstrip()
     if 'artifacts' in result:
         fields['artifacts']=[{k:a[k] for k in ('name','signature','comparison')} for a in sorted(result['artifacts'],key=lambda x:x['name'])]
     return fields
@@ -43,6 +63,8 @@ class ToolClient:
     def comparable(self,value):
         if isinstance(value,list):return [self.comparable(v) for v in value]
         if not isinstance(value,dict):return value
+        if 'error_type' in value and 'error' in value:
+            value={**value,'error':semantic(value)['error']}
         result={k:self.comparable(v) for k,v in value.items()}
         policy=self.renderings.get(result.get('name'))
         if policy and result.get('comparison')=='decoded-rgba' and result.get('signature') in policy['accepted_signatures']:
@@ -53,6 +75,9 @@ class ToolClient:
         """Keep control flow and artifact identities while collecting new numeric evidence."""
         if isinstance(value,list):return [self.calibration_view(v) for v in value]
         if not isinstance(value,dict):return value
+        # Explicit reference calibration can upgrade BCB pickle comparison; strict Replay cannot.
+        method={'bcb_result.pkl':'bcb-return-v1','bcb_execution.json':'bcb-receipt-v1'}.get(value.get('name'))
+        if method and 'comparison' in value:value={**value,'comparison':method}
         return {k:self.calibration_view(v) for k,v in value.items()
                 if k not in {'state_signature','checks'} and not (k=='signature' and 'comparison' in value)}
 

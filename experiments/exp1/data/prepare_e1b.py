@@ -10,6 +10,7 @@ import yaml
 from experiments.exp1.data.prepare_e1a import ROOT, sha, digest
 from experiments.exp1.runner.validate_arrivals import load_span
 from experiments.exp1.runner.arrival_scheduler import ms_ns
+from atsuite.tracing.storage import trace_path
 
 PROVIDERS = ['aws_lambda', 'aws_agentcore', 'ali_fc', 'ali_agentrun']
 PROFILE = 'benchmarks/DataSciBench/tasks/manifest.json'
@@ -112,7 +113,7 @@ def load(directory):
         if sha(ROOT / path) != expected: raise ValueError('Source manifest changed')
     for task in manifest['tasks'].values():
         for name, expected in task['capture_files'].items():
-            if sha(ROOT / task['capture'] / name) != expected: raise ValueError('Capture changed')
+            if sha(trace_path(ROOT / task['capture'] / name)) != expected: raise ValueError('Capture changed')
         for f in task['dataset_files']:
             if sha(ROOT / f['path']) != f['sha256']: raise ValueError('Dataset changed')
     with (directory / 'requests.csv').open() as f: rows = list(csv.DictReader(f))

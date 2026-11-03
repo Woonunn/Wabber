@@ -104,6 +104,11 @@ def features(profile: dict, pool: dict, load_rps: float) -> dict:
         for name, value in workflow.get(group, {}).items():
             result[f"{group}:{name}"] = value
     result["parallel_peak"] = workflow.get("parallel_peak")
+    result["_workflow_counts_complete"] = int(
+        profile.get("status") == "success"
+        and all(isinstance(workflow.get(group), dict) for group in ("calls", "tool_calls", "causal_revisits"))
+        and all(isinstance(workflow.get(group), list) for group in ("nodes", "edges"))
+    )
     nodes = {node["id"]: node["name"] for node in workflow.get("nodes", [])}
     for (source, target), count in Counter(
         (nodes[a], nodes[b]) for a, b in workflow.get("edges", [])

@@ -2,6 +2,8 @@
 
 This guide explains how to deploy ATSuite Function and MCP services on AWS.
 
+The current Wabber AWS account is `879512791065` in `us-east-1`. Its state bucket is `uaibs-879512791065`: the AWS Dockerfiles set `PROJECT` to this bucket, and `.env` maps both AWS providers to it through `ATSUITE_STATE_BUCKETS`. Rebuild images before deploying after changing the bucket.
+
 ## Quick Start
 
 ### 1. Install Dependencies

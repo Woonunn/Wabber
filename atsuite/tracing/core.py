@@ -118,6 +118,10 @@ class TraceCollector:
         with self.lock:
             span = self.spans[span_id]
             span["metadata"]["runtime"] = json_value(transport)
+            runtime_cpu = transport.get("provider_metadata", {}).get("resource_usage")
+            if isinstance(runtime_cpu, dict):
+                span["metadata"]["runtime_resource_usage"] = json_value(runtime_cpu)
+                span["resources"] = json_value(runtime_cpu)
             sync = transport.get("provider_metadata", {}).get("state_sync", {})
             read = [sync.get(k) for k in ("load_bytes", "branch_read_bytes")]
             write = [sync.get(k) for k in ("save_bytes", "branch_write_bytes")]
@@ -139,7 +143,10 @@ class TraceCollector:
                         except ValueError:
                             span["metadata"]["logical_state"]["complete"] = False
                             span["metadata"]["logical_state"]["errors"] = ["Invalid logical state accesses"]
-                span["resources"] = result.get("worker_usage") or result.get("kernel_execution", {}).get("worker_usage")
+                worker = result.get("worker_usage") or result.get("kernel_execution", {}).get("worker_usage")
+                if worker:
+                    # Worker and dispatch-thread counters stay separate, never inclusive sums.
+                    span["resources"] = json_value(worker)
                 span["metadata"]["state_lifecycle"] = result.get("state_lifecycle") or result.get(
                     "kernel_execution", {}
                 ).get("state_lifecycle")

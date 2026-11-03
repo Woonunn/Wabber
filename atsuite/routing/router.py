@@ -298,6 +298,14 @@ class OnlineRouter:
                         "key": key,
                         "prediction": pred,
                         "flags": flags,
+                        "prediction_flags": [name for name, missing in (
+                            ("workload_history_insufficient", workload["low_confidence"]),
+                            ("latency_prediction_unreliable", not pred["confidence"]["latency"]["reliable"]),
+                            ("cost_prediction_unreliable", not pred["confidence"]["cost"]["reliable"]),
+                            ("cost_prediction_missing", amount is None),
+                            ("latency_prediction_missing", latency is None),
+                        ) if missing],
+                        "prediction_diagnostics": pred["confidence"],
                         "available_sessions": None
                         if limit is None
                         else max(0, limit - occupied),
@@ -332,7 +340,8 @@ class OnlineRouter:
                     c
                     for c in priced
                     if not workload["low_confidence"]
-                    and not c["prediction"]["low_confidence"]
+                    and c["prediction"]["confidence"]["latency"]["reliable"]
+                    and c["prediction"]["confidence"]["cost"]["reliable"]
                 ]
                 if comparable
                 else []

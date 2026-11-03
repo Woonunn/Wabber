@@ -13,6 +13,7 @@ from unittest.mock import patch
 from atsuite.tracing import TraceCollector
 from atsuite.workload import extract_profile
 from atsuite_sdk.state import StateRuntime
+from atsuite_sdk.resources import get_resource_usage
 from benchmarks.DataSciBench.nodes.AgentTools import implementation as impl
 from benchmarks.DataSciBench.nodes.AgentTools.logical_state import StateObservation
 
@@ -53,7 +54,17 @@ class LogicalStateIntegrationTests(unittest.TestCase):
                     dict(uid="test-session", **kwargs)
                 )
                 collector.end(span, result)
-                collector.observe_runtime(span, {"result": result})
+                collector.observe_runtime(span, {"result": result,
+                                                "provider_metadata": {"resource_usage": get_resource_usage()}})
+                if name in {"execute_analysis", "merge_artifacts", "validate_result"}:
+                    usage = collector.spans[span]["resources"]
+                    self.assertGreaterEqual(usage["cpu_seconds"], 0)
+                    self.assertEqual(usage["cpu_scope"], "isolated_worker_process")
+                    self.assertEqual(usage["cpu_interval"], "call_delta")
+                    self.assertFalse(usage["cpu_complete"])
+                    self.assertFalse(usage["includes_children"])
+                else:
+                    self.assertEqual(collector.spans[span]["resources"]["cpu_scope"], "runtime_calling_thread")
                 observations.append(result["logical_state"])
                 self.assertTrue(
                     result["logical_state"]["complete"], result["logical_state"]

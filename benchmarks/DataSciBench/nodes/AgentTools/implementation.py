@@ -38,6 +38,7 @@ class Workspace:
 
 _mcp_kernel=None
 _faas_kernels={}
+_faas_kernel_users={}
 _faas_kernel_lock=threading.Lock()
 _environment_id=uuid.uuid4().hex
 _first_task=True
@@ -139,11 +140,21 @@ def sandbox(request,parent,inputs=None,branches=None):
         inputs=inputs or Path(os.environ['WABBER_DATA_ROOT'])/workspace.task_id
         key=(str(get_state_runtime().root.resolve()),str(Path(inputs).resolve()))
         with _faas_kernel_lock:
+            # Keep one idle stateless interpreter; 100 task-specific heaps must not accumulate in a warm FaaS instance.
+            for old in list(_faas_kernels):
+                if old!=key and not _faas_kernel_users.get(old,0):
+                    _faas_kernels.pop(old).close();_faas_kernel_users.pop(old,None)
             kernel=_faas_kernels.get(key)
             if kernel is None or kernel.closed:
                 kernel=NativeKernel(get_state_runtime().root,inputs,resident=False)
                 _faas_kernels[key]=kernel
-        return kernel.run(request,parent,inputs,branches)
+            _faas_kernel_users[key]=_faas_kernel_users.get(key,0)+1
+        try:return kernel.run(request,parent,inputs,branches)
+        finally:
+            with _faas_kernel_lock:
+                _faas_kernel_users[key]-=1
+                if not _faas_kernel_users[key] and len(_faas_kernels)>1:
+                    _faas_kernels.pop(key).close();_faas_kernel_users.pop(key,None)
     image=os.environ['WABBER_SANDBOX_IMAGE']
     if not image.startswith('sha256:'):raise ValueError('Pin the sandbox image ID')
     with tempfile.TemporaryDirectory(prefix='wabber-sandbox-') as directory:
@@ -330,6 +341,11 @@ def validate_result(outputs:list,snapshot:int,uid:str)->dict:
     _observations.get().include(result)
     if bundle:bundle.unlink()
     if result['status']!='ok':raise AnalysisFailure(result)
+    if workspace.task_id.startswith('bcb'):
+        result['evaluation_basis']={'mode':'upstream_bcb_tests','official_pass':None,
+            'test_sha256':result['checks']['test_sha256'],
+            'scope':'Original invocation plus full upstream tests; not official TMC/CR scoring'}
+        return result
     mapping_path=Path(os.environ['WABBER_EVALUATION_MAPPING']) if 'WABBER_EVALUATION_MAPPING' in os.environ else Path(__file__).resolve().parents[2]/'tasks/evaluation_alignment.json'
     mapping=json.loads(mapping_path.read_text())
     task=next(t for t in mapping['tasks'] if t['task_id']==workspace.task_id)

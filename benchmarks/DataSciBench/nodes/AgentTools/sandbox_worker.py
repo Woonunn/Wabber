@@ -15,6 +15,7 @@ def canonical(value,depth=0):
         if isinstance(value,torch.Tensor):return canonical(value.detach().cpu().numpy(),depth+1)
         if isinstance(value,torch.nn.Module):return {'torch_module':type(value).__name__,'weights':canonical(dict(value.state_dict()),depth+1)}
     if depth>20:raise ValueError('State cannot be compared deterministically')
+    if isinstance(value,np.bool_):return bool(value)
     if value is None or isinstance(value,(str,bool,int)):return value
     if isinstance(value,(float,np.floating)):
         return format(float(value),'.8g')
@@ -44,11 +45,24 @@ def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':'),allow_nan=False).encode()).hexdigest()
 
 
-def artifact(path,out):
+def artifact(path,out,task_id=None,evidence=None):
     import pandas as pd
     suffix=path.suffix.lower();raw=path.read_bytes()
     signature=hashlib.sha256(raw).hexdigest();method='sha256'
     if suffix=='.csv':signature=digest(canonical(pd.read_csv(path)));method='csv-round-8-decimal-places'
+    elif path.name=='bcb_result.pkl':
+        from bcb_checks import return_signature,timing_signature
+        if task_id=='bcb823':
+            if not evidence:raise ValueError('Missing timing invocation evidence')
+            signature=timing_signature(cloudpickle.loads(raw),evidence);method='bcb-return-timing-v2'
+        else:
+            clock_window=(evidence or {}).get('invocation_clock_window')
+            if task_id=='bcb61' and clock_window is None:raise ValueError('Missing invocation clock evidence')
+            signature=return_signature(cloudpickle.loads(raw),clock_window=clock_window if task_id=='bcb61' else None)
+            method='bcb-return-clock-v2' if task_id=='bcb61' else 'bcb-return-v1'
+    elif path.name=='bcb_execution.json':
+        receipt=json.loads(raw);receipt.pop('return_sha256')
+        signature=digest(receipt);method='bcb-receipt-v1'
     elif suffix=='.json':signature=digest(json.loads(raw));method='json'
     elif suffix=='.png':
         from PIL import Image
@@ -61,8 +75,10 @@ def artifact(path,out):
     elif suffix=='.pdf':
         from pypdf import PdfReader
         reader=PdfReader(path);signature=digest([(p.extract_text(),[hashlib.sha256(i.data).hexdigest() for i in p.images]) for p in reader.pages]);method='pdf-text-and-images'
-    return {'name':path.relative_to(out).as_posix(),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
+    result={'name':path.relative_to(out).as_posix(),'bytes':len(raw),'sha256':hashlib.sha256(raw).hexdigest(),
             'signature':signature,'comparison':method}
+    if method in {'bcb-return-clock-v2','bcb-return-timing-v2'}:result['evidence']=evidence
+    return result
 
 
 def run(request,parent,out,inputs=Path('/inputs'),branches=Path('/branches'),shared=None,resident=False):
@@ -136,26 +152,47 @@ def run(request,parent,out,inputs=Path('/inputs'),branches=Path('/branches'),sha
                 observation.complete=False
                 observation.errors.append('Analysis did not reach its output boundary')
                 return finish(observation.attach(result),started,out,cpu_start)
+            invocation_evidence=None
+            if request.get('task_id','').startswith('bcb') and 'solution.py' in request['outputs']:
+                from bcb_checks import invoke
+                source=(out/'solution.py').read_text()
+                invocation_start=time.perf_counter()
+                clock_start=time.time()
+                timing_observations={} if request.get('task_id')=='bcb823' else None
+                value=invoke(source,inputs,timing_observations=timing_observations)
+                invocation_evidence=(timing_observations if timing_observations is not None
+                    else {'invocation_clock_window':[clock_start,time.time()]})
+                result['bcb_invocation_s']=time.perf_counter()-invocation_start
+                (out/'bcb_result.pkl').write_bytes(cloudpickle.dumps(value,protocol=5))
+                (out/'bcb_execution.json').write_text(json.dumps({
+                    'solution_sha256':hashlib.sha256(source.encode()).hexdigest(),
+                    'input_sha256':hashlib.sha256((inputs/'fixture_args.pkl').read_bytes()).hexdigest(),
+                    'return_sha256':hashlib.sha256((out/'bcb_result.pkl').read_bytes()).hexdigest(),
+                    'invocations':1},sort_keys=True))
+                del value
             exported=scope['state_out']
             if not isinstance(exported,dict):raise ValueError('state_out must be a dict')
             export_start=time.perf_counter()
             (out/'state.pkl').write_bytes(cloudpickle.dumps(exported,protocol=5))
             observation.record('branch/state', 'write', lambda: (out/'state.pkl').stat().st_size)
             result['state_lifecycle'].update(branch_export_s=time.perf_counter()-export_start,branch_export_bytes=(out/'state.pkl').stat().st_size)
-            files=[artifact(out/name,out) for name in request['outputs']]
+            files=[artifact(out/name,out,request.get('task_id'),invocation_evidence) for name in request['outputs']]
             for f in files:
                 if f['name'] in recorded:f['evidence']=recorded[f['name']]
                 if f['name']=='model_checkpoint.pt' and request.get('task_id')=='csv_excel_29':f['evidence']={'optimizer_steps':list(training.values())}
             result.update(artifacts=files,state_signature=digest(canonical(exported)),state_names=sorted(exported),
                           stdout=(out/'stdout.txt').read_text(errors='replace')[:16000])
         elif request['mode']=='validate':
+            os.chdir(out)
             files=[]
             for name in request['outputs']:
                 p=(parent/'artifacts')/name
                 if not p.is_file() or p.stat().st_size==0:raise ValueError('Missing or empty required output: '+name)
                 # File parsing stays inside the Tool sandbox.
                 import shutil
-                target=out/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(p,target);files.append(artifact(target,out))
+                target=out/name;target.parent.mkdir(parents=True,exist_ok=True);shutil.copyfile(p,target)
+                evidence=request.get('artifact_evidence',{}).get(name) or {}
+                files.append(artifact(target,out,request.get('task_id'),evidence))
             from result_checks import validate
             checks=validate(request['task_id'],(parent/'artifacts'),inputs,request.get('artifact_evidence',{}))
             result.update(artifacts=files,state_signature=digest(canonical(shared)),checks=checks)
@@ -165,14 +202,17 @@ def run(request,parent,out,inputs=Path('/inputs'),branches=Path('/branches'),sha
         if request.get('mode')!='validate' or not state_ready:
             observation.complete=False
         observation.errors.append('Worker execution failed: '+type(exc).__name__)
-        result={'status':'error','error_type':type(exc).__name__,'error':str(exc),'traceback':traceback.format_exc(),
-                'stdout':(out/'stdout.txt').read_text(errors='replace')[:16000] if (out/'stdout.txt').exists() else ''}
+        result.update(status='error',error_type=type(exc).__name__,error=str(exc),traceback=traceback.format_exc(),
+                stdout=(out/'stdout.txt').read_text(errors='replace')[:16000] if (out/'stdout.txt').exists() else '')
     return finish(observation.attach(result),started,out,cpu_start)
 
 
 def finish(result,started,out,cpu_start):
     usage=resource.getrusage(resource.RUSAGE_SELF)
-    result['worker_usage']={'cpu_seconds':usage.ru_utime+usage.ru_stime-cpu_start,'peak_rss_bytes':usage.ru_maxrss*1024,'rss_scope':'worker process high-water mark; resident merge process includes prior calls'}
+    result['worker_usage']={'cpu_seconds':usage.ru_utime+usage.ru_stime-cpu_start,
+        'cpu_scope':'isolated_worker_process','cpu_complete':False,'cpu_interval':'call_delta',
+        'includes_children':False,'includes_other_threads':True,'pid':os.getpid(),
+        'peak_rss_bytes':usage.ru_maxrss*1024,'rss_scope':'worker process high-water mark; resident merge process includes prior calls'}
     result.update(exec_started_monotonic=started,exec_ended_monotonic=time.perf_counter(),pid=os.getpid())
     (out.parent/'result.json').write_text(json.dumps(result,allow_nan=False)+'\n')
     return result

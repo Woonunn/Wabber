@@ -7,7 +7,10 @@ import pandas as pd
 
 def validate(task,artifacts,inputs,evidence):
     checks={}
-    if task=='csv_excel_34':
+    if task.startswith('bcb'):
+        from bcb_checks import validate as validate_bcb
+        return validate_bcb(task,artifacts,inputs)
+    elif task=='csv_excel_34':
         clean=pd.read_csv(artifacts/'cleaned_data.csv');columns=[c for c in clean if 'inc' in c.lower()]
         if not columns:raise ValueError('Missing income column in cleaned data')
         values=clean[columns[0]].to_numpy(dtype=float)
