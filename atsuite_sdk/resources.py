@@ -4,6 +4,8 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 import copy
 import os
+import resource
+import sys
 import threading
 import time
 
@@ -51,4 +53,7 @@ def observe_call():
                     "cpu_complete": False, "cpu_interval": "call_delta",
                     "includes_children": False, "includes_other_threads": False,
                     "includes_nested_tool_calls": False,
-                    "pid": os.getpid(), "thread_id": threading.get_ident()})
+                    "pid": os.getpid(), "thread_id": threading.get_ident(),
+                    "peak_rss_bytes": resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * (
+                        1 if sys.platform == "darwin" else 1024),
+                    "rss_scope": "runtime process lifetime high-water mark; shared by concurrent calls"})

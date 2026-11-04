@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Protocol
 
+from atsuite.tracing.context import observe_invocation
+
 
 EndpointMap = Mapping[str, Any]
 
@@ -75,6 +77,8 @@ class StatePrefix:
 
 
 class RuntimeAdapter(Protocol):
+    targets: Mapping[str, RuntimeTarget]
+
     def capabilities(self) -> RuntimeCapabilities:
         ...
 
@@ -192,6 +196,7 @@ class FunctionRuntimeAdapter(_BaseRuntimeAdapter):
                 self._clients[target.target_id] = FunctionClient(target.endpoint)
             return self._clients[target.target_id]
 
+    @observe_invocation
     def invoke(self, request: InvocationRequest) -> InvocationResult:
         target = self._target(request.target_id)
         request_id = request.call_id or uuid.uuid4().hex
@@ -305,6 +310,7 @@ class MCPRuntimeAdapter(_BaseRuntimeAdapter):
                 stack.callback(release, target_id)
         return receipts
 
+    @observe_invocation
     def invoke(self, request: InvocationRequest) -> InvocationResult:
         target = self._target(request.target_id)
         request_id = request.call_id or uuid.uuid4().hex

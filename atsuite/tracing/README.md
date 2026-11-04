@@ -1,7 +1,9 @@
-# Harness tracing（PoC）
+# Harness tracing
 
 `TracingAdapter` 只负责将 Harness 的真实调用和因果关系送入每请求一个的 `TraceCollector`。
-本阶段实现 `LangGraphTracingAdapter`，固定使用 LangGraph **1.0.5**、langchain-core **1.2.6**（`uv.lock`）。
+三个入口共享 `TracingAdapter` 抽象类与 `TraceCollector`：`LangGraphTracingAdapter`、
+复用它的 `LangChainTracingAdapter`（LangChain v1 `create_agent`），以及 `OpenAIAgentsTracingAdapter`。
+验证版本为 LangGraph **1.0.5**、LangChain **1.2.1**、langchain-core **1.2.6**、OpenAI Agents SDK **0.20.0**（`uv.lock`）。
 Tool 的固定依赖仍使用 `benchmarks/DataSciBench/nodes/AgentTools/requirements.txt`，Docker 环境仍按原 README 固定镜像 ID。
 
 ```python
@@ -15,6 +17,96 @@ async for state in adapter.astream(compiled_graph, inputs, {"max_concurrency": 3
     pass  # state 与原 graph.astream(..., stream_mode="values") 相同
 print(collector.snapshot()["summary"])
 ```
+
+## 原生 LangChain / OpenAI Agents SDK
+
+业务 Tool 使用框架本身的声明方式即可，不需要调用 Collector、记录 Trace 或采集 CPU/RSS。
+Wabber 的接入点是运行 Agent 的位置；两个适配器都保留原生循环和返回值：
+
+```python
+from langchain.agents import create_agent
+from langchain_core.tools import tool
+from atsuite.tracing.langchain import LangChainTracingAdapter
+
+@tool
+def add(left: int, right: int) -> int:
+    """Add two integers."""
+    return left + right
+
+agent = create_agent(model, tools=[add])
+result = await LangChainTracingAdapter(collector).ainvoke(
+    agent, {"messages": [{"role": "user", "content": "Calculate 2 + 3"}]}
+)
+```
+
+```python
+from agents import Agent, function_tool
+from atsuite.tracing.openai_agents import OpenAIAgentsTracingAdapter
+
+@function_tool
+def add(left: int, right: int) -> int:
+    """Add two integers."""
+    return left + right
+
+agent = Agent(name="Calculator", model=model, tools=[add])
+result = await OpenAIAgentsTracingAdapter(collector).ainvoke(agent, "Calculate 2 + 3")
+print(result.final_output)  # 原生 RunResult
+```
+
+每个请求新建 Collector/Adapter。LangChain 的 `config`、`context` 和 checkpoint 续跑沿用 LangGraph 接口；
+OpenAI 的 `run_config`、`hooks`、`context`、`session`、`max_turns` 透传给 `Runner.run`，用户 hooks 仍执行。
+OpenAI `astream` 产生一个最终 `RunResult`，不声称是 SDK 流式事件接口。
+Wabber 只额外注册一个按请求上下文分发的 SDK trace processor，不替换已有 exporter；
+应先配置 SDK exporter，再创建 Adapter，且必须启用 SDK tracing。仅用 DeepSeek 做本地采集时，可在创建 Adapter 前
+显式调用 SDK 的 `set_trace_processors([])`，避免 SDK 默认 exporter 尝试上传到 OpenAI。
+OpenAI 当前不合并跨次 Runner 调用的历史 Trace；SDK Session 由应用持有，各次运行使用新 Collector。
+`trace_include_sensitive_data=False` 同时关闭 Wabber 的模型/工具业务内容记录，保留拓扑、ID 和资源观测。
+
+LangChain 内部默认关闭部分路由回调。Adapter 通过实际 `tool_call_id`、工具结果、graph namespace 和 superstep
+补齐隐藏路由的依赖，支持工具批次并发、汇合及原生 checkpoint 恢复；无法建立来源证据时仍输出 diagnostics。
+OpenAI 工具依赖其生成调用的模型实例，保留并行 sibling，不根据完成时间推断串行边。
+
+## 通过 Wabber Runtime 执行业务 Tool
+
+已有 SDK Tool 注册函数只保留业务实现和正常的 Tool/状态声明。`RuntimeToolset` 自动创建框架原生代理，
+隐藏 `uid`，管理 Runtime Session、校验参数并调用相同的 MCP/FaaS 接口：
+
+```python
+from atsuite.runtime import create_runtime_adapter
+from atsuite.tracing.tools import RuntimeToolset
+
+runtime = create_runtime_adapter("local", "faas")
+runtime.connect({"targets": {"calculator": "http://127.0.0.1:9200"}})
+async with RuntimeToolset(runtime, "calculator") as tools:
+    # registered_add 是 Tool 服务已注册的业务函数 / UnifiedAgentTool。
+    agent = create_agent(model, tools=tools.langchain_tools([registered_add]))
+    result = await LangChainTracingAdapter(collector).ainvoke(agent, inputs)
+    # OpenAI 使用 tools.openai_tools([registered_add])，再通过对应 Adapter 运行。
+```
+
+Runtime 调用自动继承 Wabber request ID；响应中的状态传输、worker CPU/RSS、错误和物理调用 ID
+自动关联到原生 Tool span，不额外生成重复的代理 span。MCP 保留 Session 状态，FaaS 沿用 SDK 每次恢复、写调用提交的机制。
+业务代码不需要了解这些观测逻辑。
+
+普通进程内 Tool 自动记录 harness 进程的 CPU 时间区间和 RSS。它们包含同进程其他线程/并发调用，
+CPU 不是可加总的独占 Tool 用量，峰值 RSS 是进程生命周期高水位。Runtime 提供实测值时优先使用 Runtime，
+隔离 worker 提供实测值时优先使用 worker；各层证据分别保留，不重复相加。没有把 RPC 客户端用量冒充远端用量。
+
+`atsuite.tracing.topology.tool_topology(trace)` 投影出只包含 Tool 实例的因果 DAG，去除模型/控制节点并约简传递边；
+保留失败和重试实例。完整 Trace 与 ATG 导出继续保留模型及控制节点。
+
+三种 Harness 的真实 DeepSeek V4.1 Flash + 本地 Docker 同任务验证入口：
+
+```bash
+uv run python -m experiments.exp1.capture.compare_harnesses \
+  --output results/harness-comparison \
+  --image sha256:<包含现有 DataSci sandbox_worker 的固定镜像 ID>
+uv run python -m unittest tests.test_harnesses tests.test_tracing tests.test_tracing_continuation -q
+```
+
+验证使用原始 `human_15` Prompt，模型自行生成代码，复用已有数值/样式校验器；三个入口分别真实请求模型、
+执行 Docker 并验证三张图表。输出原始响应、Trace、ATG、Tool DAG、图表、校验结果以及 `comparison.svg/png/json`。
+LangGraph 使用既有 PLAN/DISPATCH/REVIEW 图，另两个使用各自原生 agent loop；一次任务的差异不代表框架普遍性能优劣。
 
 编译图可以共享；每个独立请求使用新 Adapter/Collector 和独立目录，同一请求的 checkpoint 续跑复用原 Collector。
 已有 callbacks 会保留，同一个 Adapter 的续跑须串行执行。

@@ -14,6 +14,7 @@ from langgraph.config import get_config
 from langgraph.errors import GraphInterrupt, ParentCommand
 from langgraph.types import Command, Send
 
+from atsuite.tracing.context import active_adapter
 from atsuite.tracing.core import TraceCollector, TracingAdapter, json_value
 
 
@@ -22,10 +23,10 @@ class LangGraphTracingAdapter(TracingAdapter, BaseCallbackHandler):
 
     run_inline = True
     raise_error = True
+    harness = "langgraph"
 
     def __init__(self, collector: TraceCollector):
         super().__init__(collector)
-        self.parents = {}
         self.names = {}
         self.tasks = {rid: span["metadata"] for rid, span in collector.spans.items() if span["kind"] == "workflow"}
         self.routes = defaultdict(
@@ -37,35 +38,13 @@ class LangGraphTracingAdapter(TracingAdapter, BaseCallbackHandler):
         self.running = False
         self.session_run = None
         self.checkpoint_before = None
-        self.active = {}
-        self.frontiers = defaultdict(list)
 
-    def _owner(self, run_id):
-        run_id = str(run_id) if run_id is not None else None
-        while run_id is not None and run_id not in self.collector.spans:
-            run_id = self.parents.get(run_id)
-        return run_id
-
-    def _start_call(self, run_id, kind, name, parent, inputs, metadata=None):
-        owner = self._owner(parent)
-        self.collector.start(
-            str(run_id),
-            kind,
-            name,
-            parent_id=owner,
-            dependencies=self.frontiers[owner][:],
-            inputs=inputs,
-            metadata=metadata,
-        )
-        self.active[str(run_id)] = owner
-
-    def _end_call(self, run_id, output=None, error=None):
-        run_id = str(run_id)
-        self.collector.end(run_id, output, error)
-        if run_id in self.active:
-            owner = self.active.pop(run_id)
-            deps = self.collector.spans[run_id]["dependencies"]
-            self.frontiers[owner] = [s for s in self.frontiers[owner] if s not in deps] + [run_id]
+    def current_span_id(self) -> str | None:
+        """Resolve graph nodes and native LangChain tools, including executor threads."""
+        try:
+            return self._owner(get_config().get("callbacks").parent_run_id)
+        except (RuntimeError, AttributeError):
+            return None
 
     def on_chain_start(
         self,
@@ -89,7 +68,7 @@ class LangGraphTracingAdapter(TracingAdapter, BaseCallbackHandler):
                 name or "LangGraph",
                 inputs=inputs,
                 metadata={
-                    "harness": "langgraph",
+                    "harness": self.harness,
                     "langgraph": version("langgraph"),
                     "langchain_core": version("langchain-core"),
                     "python": platform.python_version(),
@@ -299,6 +278,9 @@ class LangGraphTracingAdapter(TracingAdapter, BaseCallbackHandler):
             if "transport" in event:
                 self.collector.observe_runtime(rid, event["transport"])
 
+    def _callback_free_dependencies(self, rid, previous):
+        return None
+
     def _resolve_dependencies(self):
         namespaces = defaultdict(list)
         for rid, meta in self.tasks.items():
@@ -331,7 +313,10 @@ class LangGraphTracingAdapter(TracingAdapter, BaseCallbackHandler):
                     name = meta["langgraph_node"]
                     deps = []
                     path = meta["langgraph_path"]
-                    if path[0] == "__pregel_push":
+                    native = self._callback_free_dependencies(rid, previous)
+                    if native is not None:
+                        deps.extend(native)
+                    elif path[0] == "__pregel_push":
                         index = path[1]
                         if index < len(sends) and sends[index][1] == name:
                             deps.append(sends[index][0])
@@ -399,7 +384,7 @@ class LangGraphTracingAdapter(TracingAdapter, BaseCallbackHandler):
             "control_writes": controls,
         }
 
-    async def astream(self, graph: Any, inputs: Any, config: dict | None = None) -> AsyncIterator[Any]:
+    async def astream(self, graph: Any, inputs: Any, config: dict | None = None, **kwargs) -> AsyncIterator[Any]:
         """Yield normal values; resume the same trace with None or Command and the same checkpoint thread."""
         if self.running:
             raise ValueError("A TracingAdapter cannot trace concurrent invocations")
@@ -442,8 +427,9 @@ class LangGraphTracingAdapter(TracingAdapter, BaseCallbackHandler):
             raise
         self.session_run = None
         interrupted = False
+        token = active_adapter.set(self)
         try:
-            async for state in graph.astream(inputs, config=config, stream_mode="values"):
+            async for state in graph.astream(inputs, config=config, stream_mode="values", **kwargs):
                 interrupted = isinstance(state, dict) and "__interrupt__" in state
                 yield state
         finally:
@@ -466,3 +452,4 @@ class LangGraphTracingAdapter(TracingAdapter, BaseCallbackHandler):
                 self.collector.save()
             finally:
                 self.running = False
+                active_adapter.reset(token)

@@ -9,11 +9,14 @@ import time
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import AsyncIterator
+from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
 from itertools import accumulate
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from atsuite.tracing.resources import resource_end, resource_start
 from atsuite.tracing.storage import read_text, write_json
 
 
@@ -44,6 +47,7 @@ class TraceCollector:
         self.spans: dict[str, dict] = {}
         self.diagnostics: list[str] = []
         self.harness_state: dict = {}
+        self._resource_starts: dict[str, float] = {}
         self.lock = threading.RLock()
 
     @classmethod
@@ -78,6 +82,8 @@ class TraceCollector:
     ) -> None:
         """Begin a session, workflow node, model call or tool call."""
         with self.lock:
+            if kind == "tool":
+                self._resource_starts[span_id] = resource_start()
             self.spans[span_id] = {
                 "id": span_id,
                 "kind": kind,
@@ -98,7 +104,12 @@ class TraceCollector:
             }
 
     def end(
-        self, span_id: str, output: Any = None, error: BaseException | str | None = None, *, status: str | None = None
+        self,
+        span_id: str,
+        output: Any = None,
+        error: BaseException | str | None = None,
+        *,
+        status: str | None = None,
     ) -> None:
         """Finish a span, retaining errors and measured elapsed time."""
         with self.lock:
@@ -112,6 +123,12 @@ class TraceCollector:
                 status=status or ("error" if error is not None else "ok"),
             )
             span["duration_s"] = (span["end_ns"] - span["start_ns"]) / 1e9
+            started = self._resource_starts.pop(span_id, None)
+            if started is not None:
+                observation = resource_end(started)
+                span["metadata"]["harness_resource_usage"] = observation
+                if span["resources"] is None:
+                    span["resources"] = observation
 
     def observe_runtime(self, span_id: str, transport: dict) -> None:
         """Attach actual Runtime measurements; absent counters stay unknown."""
@@ -160,9 +177,15 @@ class TraceCollector:
         if not isinstance(accesses, list):
             raise ValueError("Logical state accesses must be a list")
         for access in accesses:
-            if (not isinstance(access, dict) or not isinstance(access.get("object_id"), str) or not access["object_id"] or
-                    access.get("operation") not in ("read", "write") or
-                    not isinstance(access.get("bytes"), int) or isinstance(access["bytes"], bool) or access["bytes"] < 0):
+            if (
+                not isinstance(access, dict)
+                or not isinstance(access.get("object_id"), str)
+                or not access["object_id"]
+                or access.get("operation") not in ("read", "write")
+                or not isinstance(access.get("bytes"), int)
+                or isinstance(access["bytes"], bool)
+                or access["bytes"] < 0
+            ):
                 raise ValueError("Invalid logical state access")
         with self.lock:
             self.spans[span_id]["metadata"]["state_accesses"] = json_value(accesses)
@@ -250,9 +273,116 @@ class TracingAdapter(ABC):
 
     def __init__(self, collector: TraceCollector):
         self.collector = collector
+        self.parents = {}
+        self.active = {}
+        self.frontiers = defaultdict(list)
+        self.include_data = True
+
+    def _owner(self, run_id):
+        run_id = str(run_id) if run_id is not None else None
+        while run_id is not None and run_id not in self.collector.spans:
+            run_id = self.parents.get(run_id)
+        return run_id
+
+    def _start_call(self, run_id, kind, name, parent, inputs, metadata=None):
+        with self.collector.lock:
+            owner = self._owner(parent)
+            self.collector.start(
+                str(run_id),
+                kind,
+                name,
+                parent_id=owner,
+                dependencies=self.frontiers[owner][:],
+                inputs=inputs,
+                metadata=metadata,
+            )
+            self.active[str(run_id)] = owner
+
+    def _end_call(self, run_id, output=None, error=None):
+        with self.collector.lock:
+            run_id = str(run_id)
+            transport = self.collector.spans[run_id]["metadata"].get("runtime", {})
+            if error is None and transport.get("status", "ok") != "ok":
+                error = transport.get("error") or transport["status"]
+            if self.include_data and "result" in transport:
+                output = transport["result"]
+            self.collector.end(run_id, output, error)
+            if run_id in self.active:
+                owner = self.active.pop(run_id)
+                deps = self.collector.spans[run_id]["dependencies"]
+                self.frontiers[owner] = [s for s in self.frontiers[owner] if s not in deps] + [run_id]
 
     @abstractmethod
-    async def astream(self, graph: Any, inputs: Any, config: dict | None = None) -> AsyncIterator[Any]:
+    def current_span_id(self) -> str | None:
+        """Resolve the framework's current native invocation in this execution context."""
+
+    @contextmanager
+    def runtime_call(self, request):
+        """Capture Runtime transport and worker measurements, reusing native tool spans."""
+        with self.collector.lock:
+            span_id, created = self._runtime_span(request)
+        span = self.collector.spans[span_id]
+        try:
+            yield span_id
+        except BaseException as exc:
+            if created:
+                self._end_call(span_id, error=exc)
+            raise
+        else:
+            if created:
+                transport = span["metadata"].get("runtime", {})
+                self._end_call(
+                    span_id,
+                    transport.get("result") if self.include_data else None,
+                    transport.get("error") or None,
+                )
+
+    def _runtime_span(self, request):
+        span_id = next(
+            (
+                s["id"]
+                for s in self.collector.spans.values()
+                if s["metadata"].get("call_id") == request.call_id and request.call_id
+            ),
+            None,
+        )
+        parent = self.current_span_id()
+        if span_id is None and parent in self.collector.spans:
+            current = self.collector.spans[parent]
+            if (
+                current["kind"] == "tool"
+                and current["name"] == request.tool_name
+                and "runtime" not in current["metadata"]
+            ):
+                span_id = parent
+        created = span_id is None
+        if created:
+            span_id = request.call_id or str(uuid4())
+            self._start_call(
+                span_id,
+                "tool",
+                request.tool_name,
+                parent,
+                request.args if self.include_data else None,
+            )
+        span = self.collector.spans[span_id]
+        span["metadata"].update(
+            call_id=request.call_id,
+            runtime_uid=request.uid,
+            target_id=request.target_id,
+            provider_session_id=(request.session.provider_session_id if request.session else ""),
+        )
+        return span_id, created
+
+    async def ainvoke(self, agent: Any, inputs: Any, config: dict | None = None, **kwargs) -> Any:
+        """Run a native agent and return its final value while recording the same trace."""
+        result = None
+        async for result in self.astream(agent, inputs, config, **kwargs):
+            pass
+        return result
+
+    @abstractmethod
+    async def astream(self, graph: Any, inputs: Any, config: dict | None = None, **kwargs) -> AsyncIterator[Any]:
         """Yield normal graph states while collecting the execution."""
         yield  # pragma: no cover
 
