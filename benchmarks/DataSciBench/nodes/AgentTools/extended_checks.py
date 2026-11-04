@@ -115,7 +115,7 @@ def retail(artifacts,inputs):
     checks=check_mining(artifacts,basket)
     expected=d.groupby('StockCode').agg(quantity=('Quantity','sum'),revenue=('revenue','sum'),invoices=('basket_id','nunique')).sort_index()
     products=pd.read_csv(artifacts/'popular_products_analysis.csv',dtype={'StockCode':str}).set_index('StockCode').sort_index()
-    assert products.index.equals(expected.index)
+    assert products.index.equals(expected.index),'Product rows must preserve all original retained StockCode keys exactly'
     assert all(np.allclose(products[c],expected[c]) for c in ('quantity','revenue','invoices')),'Product totals do not match original transactions'
     countries=pd.read_csv(artifacts/'country_counts.csv').set_index('Country').transactions.sort_index();country=d.groupby('Country').size().sort_index()
     assert countries.index.equals(country.index) and np.array_equal(countries,country),'Country counts do not match transaction lines'

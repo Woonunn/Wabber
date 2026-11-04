@@ -63,8 +63,15 @@ class E3Tests(unittest.TestCase):
         from experiments.e3.corpus import capture
 
         attempts = []
+        environments = []
+        tool = {"endpoint": "stale-docker-ip"}
+
+        async def fresh(attempt):
+            environments.append(attempt)
+            tool["endpoint"] = f"current-docker-ip-{attempt}"
 
         async def execute(task, config, directory, **kwargs):
+            self.assertEqual(config["tool"]["endpoint"], f"current-docker-ip-{len(attempts)}")
             attempts.append(config["model"]["seed"])
             if len(attempts) == 1:
                 raise RuntimeError("independent check rejected first answer")
@@ -79,11 +86,13 @@ class E3Tests(unittest.TestCase):
                         "TravelPlanner",
                         manifest,
                         ["real-task"],
-                        {"model": {"seed": 9}},
+                        {"model": {"seed": 9}, "tool": tool},
                         root / "captures",
+                        before_attempt=fresh,
                     )
                 )
             self.assertEqual(attempts, [9, 10])
+            self.assertEqual(environments, [0, 1])
             self.assertEqual([a["success"] for a in rows[0]["attempts"]], [False, True])
             self.assertTrue(rows[0]["capture"].endswith("attempt-1"))
 

@@ -158,6 +158,10 @@ class EvidenceTests(unittest.TestCase):
         config = {"native_elasticity": {"aws_agentcore": {"e3": {}}}}
         self.assertIsNone(price_request(row, config)["total"])
         row["sessions_closed"] = True
+        self.assertIsNone(price_request(row, config)["total"])
+        row["session_release_receipts"] = [{"provider_session_id": "native-session", "http_status": 200, "closed_epoch_s": 1001}]
+        self.assertIsNone(price_request(row, config)["total"])
+        row["usage"]["sessions"][0]["residence"]["last_usage_epoch_ms"] = 1001000
         self.assertIsNotNone(price_request(row, config)["total"])
 
 

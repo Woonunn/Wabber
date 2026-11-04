@@ -32,6 +32,11 @@ def describe(*, prompt="", files=(), tools=(), category=None, hints=None) -> dic
     """Extract a versioned, deterministic multi-intent signature from supplied inputs."""
     if not isinstance(prompt, str):
         raise ValueError("Prompt must be text")
+    file_hints = {
+        key: max(f[key] for f in files if number(f.get(key)))
+        for key in ("rows", "columns", "features")
+        if any(number(f.get(key)) for f in files)
+    }
     intents = [
         name for name, pattern in INTENTS.items() if re.search(pattern, prompt, re.I)
     ]
@@ -60,7 +65,7 @@ def describe(*, prompt="", files=(), tools=(), category=None, hints=None) -> dic
         "file_types": sorted({PurePath(f["name"]).suffix.lower() for f in files}),
         "tools": sorted(set(tools)),
         "category": category,
-        "hints": dict(hints or {}),
+        "hints": {**file_hints, **dict(hints or {})},
         "semantic": {"version": 1, "primary": primary, "intents": sorted(intents)},
     }
     validate_descriptor(result)

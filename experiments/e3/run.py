@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import copy
 import hashlib
 import json
 import time
@@ -12,6 +13,7 @@ from atsuite.provider_model import ProviderModel
 from atsuite.routing.router import OnlineRouter
 from atsuite.tracing.storage import read_text
 from atsuite.workload import WorkloadModel
+from experiments.e3.feedback import NativeCostFeedback
 from experiments.e3.fixed_baselines import OfficialEvaluator, measure
 from experiments.e3.manifest import load
 from experiments.exp1.runner.arrival_scheduler import Arrival, run_open_loop, stats
@@ -21,24 +23,30 @@ STRATEGIES = ("fixed", "exploration")
 
 
 def build_router(config: dict, strategy: str, log_path: Path) -> OnlineRouter:
-    """Use fixed native resources and no financial admission limits."""
+    """Start each formal arm with empty learned state and fixed native resources."""
     if strategy not in STRATEGIES:
         raise ValueError("E3 supports only fixed and exploration")
     if set(config["pools"]) != set(PROVIDERS) or any(k in config for k in ("control", "levels", "scaling")):
         raise ValueError("Four native execution pools required; active scaling is forbidden")
-    routing = dict(config["routing"])
+    routing = copy.deepcopy(config["routing"])
     if "budget" in routing or "budget" in routing.get("exploration", {}):
         raise ValueError("E3 does not use financial budgets")
     if not routing.get("exploration"):
         raise ValueError("Online routing requires exploration")
+    routing["exploration"].pop("epoch_ns", None)
+    pools = copy.deepcopy(config["pools"])
+    for pool in pools.values():
+        if pool.get("billing"):
+            pool["billing"].pop("calibration", None)
     router = OnlineRouter(
-        WorkloadModel.load(Path(config["workload_model"])),
-        ProviderModel.load(Path(config["provider_model"])),
-        config["pools"],
+        WorkloadModel(),
+        ProviderModel(minimum_samples=3),
+        pools,
         config["limits"],
         **routing,
         log_path=log_path,
     )
+    assert not router.workload.samples and not router.workload.initial_profiles and not router.provider.samples
     router.session_retention_s = {
         "aws_agentcore": max(
             a["lifecycle_configuration"]["idleRuntimeSessionTimeout"]
@@ -123,7 +131,7 @@ async def execute(sequence: Path, config: dict, strategy: str, output: Path) -> 
 
     oracle = OfficialEvaluator(task, output / "oracle.log")
     original = travel.validate
-    router = observer = watcher = None
+    router = observer = watcher = cost_feedback = cost_watcher = None
     rows, submitted = [], {}
     try:
         startup = await oracle.start()
@@ -133,6 +141,8 @@ async def execute(sequence: Path, config: dict, strategy: str, output: Path) -> 
             observer = NativeOccupancy(router, config, output / "native-occupancy.jsonl")
             await observer.refresh()
             watcher = asyncio.create_task(observer.watch())
+            cost_feedback = NativeCostFeedback(router, config, output)
+            cost_watcher = asyncio.create_task(cost_feedback.watch())
         (output / "execution.json").write_text(
             json.dumps(
                 {
@@ -143,6 +153,7 @@ async def execute(sequence: Path, config: dict, strategy: str, output: Path) -> 
                     "config": config,
                     "oracle": startup,
                     "accounting": "ATSuite native usage pricing; no financial budget; no instance control",
+                    "initial_learning_state": {"workload_samples": 0, "provider_samples": 0, "exploration_attempts": 0},
                 },
                 indent=2,
             )
@@ -205,10 +216,23 @@ async def execute(sequence: Path, config: dict, strategy: str, output: Path) -> 
         }
         (output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
         if router:
+            if cost_watcher:
+                cost_watcher.cancel()
+                await asyncio.gather(cost_watcher, return_exceptions=True)
+                cost_watcher = None
+            result["native_cost_feedback"] = {
+                "imported_requests": len(cost_feedback.imported),
+                "last_error": cost_feedback.failed,
+                "scope": "only formal completed requests; unavailable native costs remain unknown",
+            }
+            (output / "result.json").write_text(json.dumps(result, indent=2) + "\n")
             router.workload.save(output / "workload_model.json")
             router.provider.save(output / "provider_model.json")
         return result
     finally:
+        if cost_watcher:
+            cost_watcher.cancel()
+            await asyncio.gather(cost_watcher, return_exceptions=True)
         if watcher:
             watcher.cancel()
             await asyncio.gather(watcher, return_exceptions=True)

@@ -17,6 +17,7 @@ class DeepSeekClient:
     async def decide(self,phase,iteration,messages):
         request={'model':self.config.get('name','deepseek-flash'),'messages':messages,'response_format':{'type':'json_object'},
                  **{k:self.config[k] for k in ('temperature','top_p','max_tokens')},
+                 **({'reasoning_effort':self.config['reasoning_effort']} if 'reasoning_effort' in self.config else {}),
                  'extra_body':{'thinking':{'type':self.config.get('thinking','disabled')}}}
         if self.tool_definitions is not None:
             request.pop('response_format')

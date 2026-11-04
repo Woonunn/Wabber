@@ -1,5 +1,7 @@
 # E3：跨 Workload 请求路由
 
+新的 24 条保留 Capture + 189 条新增独立请求、空模型启动和费用平衡检查见 [INDEPENDENT.md](INDEPENDENT.md)。
+
 最新两组真实测试的性能、计价、路由分布和问题分析见 [TWO_ARM.md](TWO_ARM.md)。
 
 新一轮大状态、长计算任务集的设计、配对验证与 ¥30 开销范围见 [STATEFUL.md](STATEFUL.md)。
@@ -18,7 +20,7 @@
 
 费用统一使用 `atsuite.analysis.api.price_metrics` 和 `atsuite.analysis.pricing`。E3 evidence 只负责把已关联原生 Request/Session ID 的测量转换成 ATSuite 的 ProviderMetric/StateObservation，不维护第二套计价公式。Lambda 使用原生计费时长、内存、请求与临时盘；AgentCore 使用原生 CPU-hours/Memory GB-hours；阿里 Session 使用原生完整生命周期，避免只统计 Tool 活跃时间。状态费用沿用 ATSuite，另行披露请求内 Trace 状态观测范围。结果是原生用量计价，不声称为已结算发票；CUR 和日账单不再是实验前置条件。
 
-初始化模型仅使用预先完成的 24 任务×四平台预检。正式基线结果不回灌初始化。`profile.initialize` 保存初始 Workload/Provider 模型及来源；每组从相同封存环境开始，Online 仅在请求完成后更新模型。两组顺序运行，避免争用同一执行池。
+正式模型从空历史启动，不导入预检 Profile、成本或探索计数。`profile.initialize` 仅检查预检正确性与平台能力；`run.build_router` 忽略历史模型路径。Online 只在请求完成后更新画像，并在原生费用实际可用时补充成本观测。两组顺序运行，避免争用同一执行池。历史双组结果使用的旧初始化方式保留于原实验记录。
 
 容量观察为只读：阿里原生 Active Session 与本地未释放预约共同进入准入。当前实验在任务验证结束后主动释放 Session；释放失败时保留预约，并由固定 idle 策略兜底。AgentCore 原生用量日志有交付延迟，计价须等待终止后的用量记录。观测失败时对应池停止新增准入，不调整实例、配额或弹性策略。
 

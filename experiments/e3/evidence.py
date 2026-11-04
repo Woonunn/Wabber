@@ -37,6 +37,11 @@ def price_request(row: dict, config: dict, native_sessions: dict | None = None) 
                 retention_s = 0 if row.get("sessions_closed") else 295
                 if last is None or last_tool is None or last / 1000 < last_tool + retention_s:
                     missing.append("native AgentCore retention tail pending")
+                if row.get("sessions_closed"):
+                    stops = [r["closed_epoch_s"] for r in row.get("session_release_receipts", [])
+                             if r.get("provider_session_id") == s["session_id"] and r.get("http_status") == 200]
+                    if not stops or last is None or last / 1000 < max(stops):
+                        missing.append("native AgentCore usage through successful StopRuntimeSession response pending")
     elif provider == "ali_agentrun":
         for sid in usage["native_session_ids"]:
             s = (native_sessions or {}).get(sid)

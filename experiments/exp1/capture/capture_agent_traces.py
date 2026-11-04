@@ -45,6 +45,11 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
         features(provider_context.get('reference_profile',{}),provider_context['pool'],provider_context['load_rps'])
     tasks=json.loads(Path(manifest or ROOT/'benchmarks/DataSciBench/tasks/manifest.json').read_text())
     task=next(t for t in tasks['tasks'] if t['task_id']==task_id)
+    for instruction in ('planner_instruction','validation_contract'):
+        if instruction in config:
+            if not isinstance(config[instruction],str) or not config[instruction].strip():
+                raise ValueError('Agent instructions must be nonempty strings')
+            task={**task,instruction:config[instruction]}
     if prompt is not None:
         import hashlib
         task={**task,'prompt':prompt,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest()}
@@ -74,7 +79,7 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
     tools=model=None;state=initial;sessions_closed=False
     try:
         if router is not None:
-            decision=router.decide(request_id,task_id,routing_context['load_rps'],as_of_ns=time.time_ns(),arrival_ns=arrival_ns,
+            decision=router.decide(request_id,None,routing_context['load_rps'],as_of_ns=time.time_ns(),arrival_ns=arrival_ns,
                                    shadow=routing_context.get('shadow',False),
                                    pool_load_rps=routing_context.get('pool_load_rps'),descriptor=descriptor,
                                    allowed_pools=routing_context.get('allowed_pools'),

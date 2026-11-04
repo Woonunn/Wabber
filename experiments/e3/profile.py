@@ -7,28 +7,31 @@ import time
 from pathlib import Path
 
 from atsuite.tracing.storage import read_text
-from experiments.e3.manifest import load
+from experiments.e3.manifest import WORKLOADS, load
 from experiments.e3.report import matrix
 from experiments.e3.run import PROVIDERS
 from experiments.exp1.capture.capture_agent_traces import run
 
 
 def initialize(config: dict, plan: dict, attempts: list[dict], priced: list[dict], output: Path) -> dict:
-    """Seed models exclusively from the paired preflight, never formal outcomes."""
+    """Validate preflight readiness, then discard its learned profiles and costs."""
     import copy
     import hashlib
 
     from atsuite.provider_model import ProviderModel
-    from atsuite.provider_model.observation import execution_context
-    from atsuite.workload import WorkloadModel, describe
+    from atsuite.workload import WorkloadModel
 
     output.mkdir(parents=True, exist_ok=False)
     tasks = {t["id"]: t for t in plan["tasks"]}
-    prices = {(r["task"], r["pool"]): r["priced_cost"] for r in priced}
-    expected = {(t, p) for t in tasks for p in PROVIDERS}
-    if {(r["task"], r["pool"]) for r in attempts} != expected or len(attempts) != len(expected):
-        raise ValueError("Initial models require the declared paired preflight")
+    expected = {(w, p) for w in WORKLOADS for p in PROVIDERS}
+    if any(r["task"] not in tasks for r in attempts):
+        raise ValueError("Unknown preflight task")
+    if {(tasks[r["task"]]["workload"], r["pool"]) for r in attempts} != expected:
+        raise ValueError("Preflight must validate every workload/provider pair")
+    if not all(r["success"] for r in attempts):
+        raise ValueError("Preflight contains failures")
     config = copy.deepcopy(config)
+    config["pools"] = {}
     for p in PROVIDERS:
         a = config["native_elasticity"][p]["e3"]
         resources = {"cpu": a.get("cpu"), "memory_mb": a.get("memory_mb"), "disk_mb": a.get("disk_mb")}
@@ -48,12 +51,8 @@ def initialize(config: dict, plan: dict, attempts: list[dict], priced: list[dict
             "invocations_per_instance": 1 if p in {"aws_lambda", "ali_fc"} else None,
         }
     workload, provider = WorkloadModel(), ProviderModel(minimum_samples=3)
-    available = time.time_ns()
     supported = set()
-    for attempt in attempts:
-        if not attempt["success"]:
-            raise ValueError("Preflight contains failures")
-        task = tasks[attempt["task"]]
+    for task in tasks.values():
         declared = next(
             t for t in json.loads(Path(task["manifest"]).read_text())["tasks"] if t["task_id"] == task["task_id"]
         )
@@ -63,47 +62,6 @@ def initialize(config: dict, plan: dict, attempts: list[dict], priced: list[dict
             else [d["name"] for d in declared["tool_definitions"]]
         )
         supported.update(tools)
-        descriptor = describe(
-            prompt=declared["prompt"],
-            files=declared["readiness"]["inputs"]["files"],
-            tools=tools,
-            category=task["workload"],
-        )
-        profile = copy.deepcopy(attempt["profile"])
-        profile["descriptor"] = descriptor
-        profile["execution_pool"] = execution_context(config["pools"][attempt["pool"]])
-        workload.update(profile, available, descriptor=descriptor)
-        cost = prices[attempt["task"], attempt["pool"]]
-        if cost["total"] is None:
-            raise ValueError("Preflight native pricing is incomplete: " + attempt["task"] + ":" + attempt["pool"])
-        components = {}
-        for line in cost["lines"]:
-            components[line["category"]] = components.get(line["category"], 0) + line["amount"]
-        peers = [r for r in attempts if r["pool"] == attempt["pool"]]
-        load = len(peers) / (max(r["completed_epoch"] for r in peers) - min(r["started_epoch"] for r in peers))
-        provider.update(
-            {
-                "kind": "request",
-                "id": profile["request_id"],
-                "task_id": None,
-                "profile": profile,
-                "pool": config["pools"][attempt["pool"]],
-                "load_rps": load,
-                "status": profile["status"],
-                "arrival_ns": profile["arrival_ns"],
-                "completed_ns": profile["completed_ns"],
-                "available_ns": available,
-                "measurements": {"latency_s": attempt["latency_s"], "tool_s": profile["metrics"].get("runtime_tool_s")},
-                "cost": {
-                    "basis": "estimated",
-                    "currency": cost["currency"],
-                    "scope": "atsuite_runtime_and_traced_state",
-                    "complete": True,
-                    "components": components,
-                    "evidence": ["paired preflight native metrics priced by ATSuite"],
-                },
-            }
-        )
     workload.save(output / "workload_model.json")
     provider.save(output / "provider_model.json")
     config.update(
@@ -129,7 +87,7 @@ def initialize(config: dict, plan: dict, attempts: list[dict], priced: list[dict
                 "timeout_s": 900,
                 "currency": "CNY" if p.startswith("ali") else "USD",
                 "tools": sorted(supported),
-                "evidence": "96 real preflight executions",
+                "evidence": "provider capabilities validated in preflight; task costs not imported",
             }
             for p in PROVIDERS
         },
@@ -146,9 +104,12 @@ def initialize(config: dict, plan: dict, attempts: list[dict], priced: list[dict
     (output / "initialization.json").write_text(
         json.dumps(
             {
-                "source": "preflight only",
+                "source": "empty formal models; preflight retained for readiness audit only",
                 "attempts": len(attempts),
-                "available_ns": available,
+                "preflight_priced_rows_not_imported": len(priced),
+                "workload_samples": 0,
+                "provider_samples": 0,
+                "exploration_attempts": 0,
                 "formal_outcomes_used": False,
                 "task_id_matching": False,
                 "fixed_provider": "ali_fc",

@@ -1,6 +1,8 @@
 """Real local resident/restored workers; no cloud or LLM account required."""
 
 import importlib.util
+import ast
+import hashlib
 import json
 import os
 import tempfile
@@ -16,6 +18,21 @@ from atsuite_sdk.state import StateRuntime
 from atsuite_sdk.resources import get_resource_usage
 from benchmarks.DataSciBench.nodes.AgentTools import implementation as impl
 from benchmarks.DataSciBench.nodes.AgentTools.logical_state import StateObservation
+
+
+class CanonicalTypeTests(unittest.TestCase):
+    def test_selector_types_have_stable_distinct_identities(self):
+        import numpy as np
+
+        source = Path("benchmarks/DataSciBench/nodes/AgentTools/sandbox_worker.py")
+        function = next(node for node in ast.parse(source.read_text()).body
+                        if isinstance(node, ast.FunctionDef) and node.name == "canonical")
+        scope = {"hashlib": hashlib}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(source), "exec"), scope)
+        canonical = scope["canonical"]
+        self.assertEqual(canonical(np.number), {"python_type": "numpy.number"})
+        self.assertNotEqual(canonical(np.float32), canonical(np.float64))
+        self.assertNotEqual(canonical(int), canonical(float))
 
 
 @unittest.skipUnless(

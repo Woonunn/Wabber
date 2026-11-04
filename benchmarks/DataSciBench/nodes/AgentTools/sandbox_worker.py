@@ -10,6 +10,7 @@ from logical_state import StateObservation
 def canonical(value,depth=0):
     import numpy as np
     import pandas as pd
+    if isinstance(value,type):return {'python_type':value.__module__+'.'+value.__qualname__}
     if type(value).__module__.startswith('torch'):
         import torch
         if isinstance(value,torch.Tensor):return canonical(value.detach().cpu().numpy(),depth+1)

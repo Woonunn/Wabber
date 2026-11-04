@@ -3,13 +3,15 @@
 import argparse
 import asyncio
 import json
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
 from experiments.exp1.capture.capture_agent_traces import run
 
 
 async def capture(
-    workload: str, manifest: Path, tasks: list[str], config: dict, output: Path, concurrency: int = 2
+    workload: str, manifest: Path, tasks: list[str], config: dict, output: Path, concurrency: int = 2,
+    *, before_attempt: Callable[[int], Awaitable[None]] | None = None,
 ) -> list:
     """Select the first independently valid live Capture, never feeding validation back to the model."""
     declared = {t["task_id"] for t in json.loads(manifest.read_text())["tasks"]}
@@ -34,6 +36,8 @@ async def capture(
                 current = {**config, "model": {**config["model"], "seed": config["model"]["seed"] + attempt}}
                 row = {"directory": str(directory.resolve()), "success": False}
                 try:
+                    if before_attempt is not None:
+                        await before_attempt(attempt)
                     await run(task, current, directory, manifest=manifest, workload=workload)
                     row["success"] = True
                     receipt["capture"] = str(directory.resolve())

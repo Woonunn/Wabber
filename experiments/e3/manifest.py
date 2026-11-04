@@ -22,11 +22,26 @@ def seal(
     duration_ms: float,
     output: Path,
     artifacts: list[Path] | None = None,
+    assignments: list[dict] | None = None,
 ) -> dict:
     """Freeze task inputs, source timing, captures and predetermined composition phases."""
     if not arrivals or not tasks or type(seed) is not int:
         raise ValueError("Tasks, real arrivals and integer seed are required")
     ids = [t["id"] for t in tasks]
+    if assignments is not None:
+        if len(tasks) != len(arrivals) or len(assignments) != len(arrivals):
+            raise ValueError("Independent requests need one task and assignment per arrival")
+        if len({str(Path(t["capture"]).resolve()) for t in tasks}) != len(tasks):
+            raise ValueError("Independent requests cannot share a Capture directory")
+        if {a["task"] for a in assignments} != set(ids):
+            raise ValueError("Every independent request must execute exactly once")
+        lookup = {t["id"]: t for t in tasks}
+        for arrival, assignment in zip(arrivals, assignments):
+            if (
+                assignment["arrival_id"] != arrival["arrival_id"]
+                or assignment["workload"] != lookup[assignment["task"]]["workload"]
+            ):
+                raise ValueError("Independent assignment does not match its arrival or workload")
     for value in ids + [a["arrival_id"] for a in arrivals]:
         if not isinstance(value, str) or value in {".", ".."} or Path(value).name != value or not value:
             raise ValueError("Request and task IDs must be safe path components")
@@ -61,6 +76,8 @@ def seal(
         declared = next(t for t in task_manifest["tasks"] if t["task_id"] == task["task_id"])
         capture = Path(task["capture"])
         required += sorted(p for p in capture.rglob("*") if p.is_file())
+        if task.get("agent_config"):
+            required.append(Path(task["agent_config"]))
         if not required or not capture.is_dir():
             raise ValueError("Successful live Capture required")
         from atsuite.tracing.storage import read_text
@@ -86,7 +103,9 @@ def seal(
                 raise ValueError("Calibrated reference requires its original live Capture")
             required += sorted(p for p in source.rglob("*") if p.is_file())
         for path in required:
-            files[str(path.resolve())] = digest(path)
+            key = str(path.resolve())
+            if key not in files:
+                files[key] = digest(path)
     root = Path(__file__).resolve().parents[2]
     for workload in WORKLOADS:
         for directory in ("nodes", "langgraph_agent"):
@@ -121,10 +140,14 @@ def seal(
     rng = random.Random(seed)
     by_workload = {w: [t["id"] for t in tasks if t["workload"] == w] for w in WORKLOADS}
     requests = []
-    for arrival in arrivals:
+    for index, arrival in enumerate(arrivals):
         phase = max(p for p in range(len(phases)) if starts[p] <= ms_ns(arrival["relative_arrival_ms"]))
-        workload = rng.choices(WORKLOADS, [phases[phase]["weights"][w] for w in WORKLOADS])[0]
-        requests.append({**arrival, "workload": workload, "task": rng.choice(by_workload[workload]), "phase": phase})
+        if assignments is None:
+            workload = rng.choices(WORKLOADS, [phases[phase]["weights"][w] for w in WORKLOADS])[0]
+            task_id = rng.choice(by_workload[workload])
+        else:
+            workload, task_id = assignments[index]["workload"], assignments[index]["task"]
+        requests.append({**arrival, "workload": workload, "task": task_id, "phase": phase})
     value = {
         "schema": 1,
         "seed": seed,

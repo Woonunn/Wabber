@@ -150,7 +150,12 @@ async def measure(
         "actual_cost": None,
         "billing_evidence": None,
     }
-    agent = {**config["agents"][task["workload"]], "tool": config["targets"][task["workload"]][provider]["tool"]}
+    agent_config = (
+        json.loads(Path(task["agent_config"]).read_text())
+        if task.get("agent_config")
+        else config["agents"][task["workload"]]
+    )
+    agent = {**agent_config, "tool": config["targets"][task["workload"]][provider]["tool"]}
     try:
         await run(
             task["task_id"],
