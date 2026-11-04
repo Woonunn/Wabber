@@ -1,0 +1,15 @@
+{
+  "base_url": "https://ws-xm318fggidnkzg0j.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+  "api_key_env": "DASHSCOPE_API_KEY",
+  "embedding_model": "text-embedding-v4",
+  "rerank_model": "qwen3-rerank",
+  "rerank_api": "dashscope",
+  "rerank_base_url": "https://ws-xm318fggidnkzg0j.cn-beijing.maas.aliyuncs.com/api/v1",
+  "revision": "dashscope-cn-beijing-embedding-v4-rerank-qwen3-rates-2026-11-04",
+  "currency": "CNY",
+  "rates": {
+    "embedding": 0.5,
+    "input": 0.5,
+    "output": 0
+  }
+}

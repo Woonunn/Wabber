@@ -1,0 +1,14 @@
+{
+  "base_url": "https://api.siliconflow.cn/v1",
+  "api_key_env": "SILICONFLOW_API_KEY",
+  "embedding_model": "BAAI/bge-m3",
+  "rerank_model": "BAAI/bge-reranker-v2-m3",
+  "rerank_api": "siliconflow",
+  "revision": "siliconflow-cn-bge-m3-reranker-v2-m3-free-rates-2026-11-05",
+  "currency": "CNY",
+  "rates": {
+    "embedding": 0,
+    "input": 0,
+    "output": 0
+  }
+}

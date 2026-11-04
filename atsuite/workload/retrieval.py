@@ -4,6 +4,7 @@ import json
 import math
 import os
 import time
+from typing import Any
 
 from atsuite.workload.descriptor import (
     compatibility_key,
@@ -39,17 +40,30 @@ class ContextBackend:
             "currency",
             "rates",
         }
-        if set(config) != required or any(
+        optional = {"rerank_api", "rerank_base_url"}
+        if not required <= set(config) or set(config) - required - optional or any(
             not isinstance(config[k], str) or not config[k]
             for k in required - {"rates"}
         ):
             raise ValueError("Invalid context model configuration")
+        self.rerank_api = config.get("rerank_api", "chat")
+        if self.rerank_api not in {"chat", "dashscope", "siliconflow"} or (
+            self.rerank_api == "dashscope"
+            and (
+                not isinstance(config.get("rerank_base_url"), str)
+                or not config["rerank_base_url"].startswith("https://")
+            )
+        ):
+            raise ValueError("Invalid rerank API configuration")
         if set(config["rates"]) != {"embedding", "input", "output"} or any(
             not number(v) for v in config["rates"].values()
         ):
             raise ValueError("Supply dated per-million-token inference rates")
         self.config = config
-        self.revision = fingerprint(config)
+        self.revision = fingerprint(
+            {"config": config, "rerank_payload": "gated-context-v2"}
+            if self.rerank_api == "siliconflow" else config
+        )
         self.client = OpenAI(
             base_url=config["base_url"],
             api_key=os.environ[config["api_key_env"]],
@@ -61,16 +75,108 @@ class ContextBackend:
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Return vectors in input order and account for embedding token use."""
-        response = self.client.embeddings.create(
-            model=self.config["embedding_model"], input=texts
-        )
-        self.cost += (
-            response.usage.total_tokens * self.config["rates"]["embedding"] / 1e6
-        )
-        return [r.embedding for r in sorted(response.data, key=lambda r: r.index)]
+        vectors = []
+        # text-embedding-v4 accepts at most ten texts per request.
+        for start in range(0, len(texts), 10):
+            batch = texts[start : start + 10]
+            response = self.client.embeddings.create(
+                model=self.config["embedding_model"], input=batch,
+                encoding_format="float",
+            )
+            if response.usage is None or not number(response.usage.total_tokens):
+                raise ValueError("Missing embedding accounting")
+            self.cost += (
+                response.usage.total_tokens * self.config["rates"]["embedding"] / 1e6
+            )
+            rows = sorted(response.data, key=lambda r: r.index)
+            if [r.index for r in rows] != list(range(len(batch))):
+                raise ValueError("Invalid embedding indices")
+            vectors.extend(r.embedding for r in rows)
+        return vectors
 
     def rerank(self, query: dict, candidates: list[dict]) -> list[dict]:
         """Judge only arrival contexts and already-visible historical observations."""
+        if self.rerank_api in {"dashscope", "siliconflow"}:
+            if not candidates:
+                return []
+            if self.rerank_api == "dashscope":
+                response = self.client.post(
+                    self.config["rerank_base_url"].rstrip("/")
+                    + "/services/rerank/text-rerank/text-rerank",
+                    cast_to=dict[str, Any],
+                    body={
+                        "model": self.config["rerank_model"],
+                        "input": {
+                            "query": json.dumps(query, sort_keys=True, ensure_ascii=False),
+                            "documents": [
+                                json.dumps(c, sort_keys=True, ensure_ascii=False)
+                                for c in candidates
+                            ],
+                        },
+                        "parameters": {
+                            "top_n": len(candidates),
+                            "instruct": RERANK_INSTRUCTION.split("\nReturn JSON")[0],
+                        },
+                    },
+                )
+
+                tokens = response.get("usage", {}).get("total_tokens")
+                results = response.get("output", {}).get("results")
+            else:
+                if compatibility_key(query) is not None and all(
+                    compatible(query, c.get("context")) for c in candidates
+                ):
+                    # The gate already verified these shared definitions and identities.
+                    shared = {"tool_definitions", "harness"}
+                    query = {k: v for k, v in query.items() if k not in shared}
+                    candidates = [
+                        {**c, "context": {
+                            k: v for k, v in c["context"].items() if k not in shared
+                        }}
+                        for c in candidates
+                    ]
+                response = self.client.post(
+                    "/rerank",
+                    cast_to=dict[str, Any],
+                    body={
+                        "model": self.config["rerank_model"],
+                        "query": json.dumps(query, sort_keys=True, ensure_ascii=False),
+                        "documents": [
+                            json.dumps(c, sort_keys=True, ensure_ascii=False)
+                            for c in candidates
+                        ],
+                        "top_n": len(candidates),
+                        "return_documents": False,
+                    },
+                )
+                tokens = response.get("meta", {}).get("tokens", {}).get("input_tokens")
+                results = response.get("results")
+            if not number(tokens):
+                raise ValueError("Missing rerank accounting")
+            self.cost += tokens * self.config["rates"]["input"] / 1e6
+            if (
+                not isinstance(results, list)
+                or len(results) != len(candidates)
+                or any(
+                    not isinstance(r, dict)
+                    or type(r.get("index")) is not int
+                    or not 0 <= r["index"] < len(candidates)
+                    or not number(r.get("relevance_score"))
+                    or r["relevance_score"] > 1
+                    for r in results
+                )
+                or len({r["index"] for r in results}) != len(candidates)
+            ):
+                raise ValueError("Invalid native reranking response")
+            return [
+                {
+                    "id": candidates[r["index"]]["id"],
+                    "usable": True,
+                    "utility": r["relevance_score"],
+                    "reason": "native rerank relevance; not a calibrated usability judgment",
+                }
+                for r in results
+            ]
         response = self.client.chat.completions.create(
             model=self.config["rerank_model"],
             temperature=0,
@@ -104,7 +210,7 @@ class ContextRetriever:
         self.backend = backend
         self.revision = fingerprint(
             {
-                "algorithm": "context-retrieval-v2",
+                "algorithm": "context-retrieval-v4",
                 "backend": getattr(backend, "revision", None),
                 "rerank": rerank,
                 "instruction": RERANK_INSTRUCTION if backend and rerank else None,
@@ -188,6 +294,13 @@ class ContextRetriever:
             recalled = sorted(
                 zip(compatible_profiles, keys[1:]), key=lambda pair: -cosine(pair[1])
             )[:40]
+            if self.rerank:
+                recalled = [
+                    (p, key) for p, key in recalled
+                    if resource_distance(query, p["descriptor"]) <= 0.5
+                ]
+                if not recalled:
+                    return [], evidence
             history = [
                 {
                     "id": p["request_id"],
@@ -196,10 +309,8 @@ class ContextRetriever:
                 }
                 for p, _ in recalled
             ]
-            judgments = (
-                self.backend.rerank(query, history)
-                if self.rerank
-                else [
+            if not self.rerank:
+                judgments = [
                     {
                         "id": p["request_id"],
                         "usable": i == 0,
@@ -208,7 +319,21 @@ class ContextRetriever:
                     }
                     for i, (p, _) in enumerate(recalled)
                 ]
-            )
+            elif len(history) <= limit and getattr(
+                self.backend, "rerank_api", None
+            ) in {"dashscope", "siliconflow"}:
+                # Native scores only order candidates; all fit the empirical sample.
+                judgments = [
+                    {
+                        "id": p["request_id"],
+                        "usable": True,
+                        "utility": 0.0,
+                        "reason": "native ranking skipped: all eligible candidates fit sample limit",
+                    }
+                    for p, _ in recalled
+                ]
+            else:
+                judgments = self.backend.rerank(query, history)
             ids = {p["request_id"] for p, _ in recalled}
             if (
                 not isinstance(judgments, list)

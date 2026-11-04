@@ -45,6 +45,35 @@ model = WorkloadModel(retrieval_config=retrieval)
 
 费率与模型版本由部署配置提供，不内置当前供应商报价；API key 仅引用环境变量，不保存到快照。测试不调用该服务。两个模型需由同一服务提供，或由调用方注入 `ContextRetriever(backend)`；backend 提供 `embed(texts)`、`rerank(query, candidates)`、`revision`、`currency` 和累计 `cost`。
 
+百炼北京配置见 `experiments/exp1/configs/retrieval-dashscope.json`。在 `usa` 上，密钥位于 `/root/Wabber/.env`（权限 600），使用方式：
+
+```python
+import json
+from pathlib import Path
+from dotenv import load_dotenv
+from atsuite.workload import WorkloadModel
+
+load_dotenv(".env")
+retrieval = json.loads(Path("experiments/exp1/configs/retrieval-dashscope.json").read_text())
+model = WorkloadModel(retrieval_config=retrieval)
+```
+
+现有实验配置的 `retrieval` 字段接收同一个对象。此配置使用业务空间专属域名，`text-embedding-v4` 每批最多 10 条；`rerank_api: "dashscope"` 经 `rerank_base_url` 调用原生排序接口，保留完整上下文与已有行为，用执行相关性指令排序，验证结果索引、分数和 token 用量。默认聊天 JSON 重排接口仍兼容旧配置。
+
+原生 `qwen3-rerank` 返回相关性分数，不能产生原聊天模型的逐项 `usable` 判断或解释。因此原生适配器将候选交给现有兼容性、规模与数量限制，并按相关性排序；分数不作为预测正确率，也不引入未经校准的拒绝阈值。需要独立的行为可用性判定时应使用聊天重排后端。此配置不会自动打开 `enable_context_routing`。
+
+费率核对日期为 2026-11-04，北京两个模型均按每百万输入 token 0.5 CNY 统计，排序无输出费；免费额度、优惠和实际账单结算不在该估算中。来源：[阿里云模型价格](https://help.aliyun.com/zh/model-studio/model-pricing)。模型名是托管服务别名，`revision` 标记本次配置与费率版本，不代表供应商不可变权重摘要；严谨对比实验仍需供应商版本保证。
+
+硅基流动免费模型配置见 `experiments/exp1/configs/retrieval-siliconflow.json`，使用上述代码时替换配置文件路径即可；E3 回放可传 `--retrieval experiments/exp1/configs/retrieval-siliconflow.json`。`usa` 上的 `SILICONFLOW_API_KEY` 已配置在同一个 `.env`（权限 600），无需逐个申请模型。此配置使用 `https://api.siliconflow.cn/v1`、`BAAI/bge-m3` 和 `BAAI/bge-reranker-v2-m3`；`rerank_api: "siliconflow"` 调用原生 `/rerank`，验证完整且不重复的索引、有限的 0..1 分数和 `meta.tokens.input_tokens`。
+
+按 2026-11-05 核对的[官方价格](https://www.siliconflow.cn/pricing)，这两个不带 `Pro/` 前缀的模型调用免费，配置中的三个费率均为 0；`Pro/` 版本收费，不会自动切换。[官方限流说明](https://docs.siliconflow.cn/docs/userguide/faqs/rate-limit-and-upgradation)要求实名认证，免费模型有固定账户级限流，超限会返回 429。模型权重分别采用 [MIT](https://huggingface.co/BAAI/bge-m3) 和 [Apache-2.0](https://huggingface.co/BAAI/bge-reranker-v2-m3) 许可；自行部署仍需承担算力费用。
+
+BGE 重排只返回相关性分数，不支持行为判断指令，也不产生逐项可用性解释；与上述原生适配一样，分数仅用于排序，不代表行为可用性或预测正确率。托管模型名不是不可变权重版本，严谨实验仍需版本保证。此配置不自动更改现有实验配置或启用路由。
+
+重排效率：召回仍取前 40 条，现有规模门槛在重排调用之前排除必定不能采用的候选；不从第 41 条补位，纯 Embedding 基线保持原行为。BGE 原生请求仅在完整工具/Harness 身份硬过滤通过后省略双方重复的 tool_definitions 与 harness，保留工具名、完整 Prompt、文件信息、模型、控制策略、会话及历史行为。原始上下文、兼容性检查和 Embedding 输入仍保留全量字段；直接传入不完整或不同身份的上下文时不精简。请求格式与检索算法版本更新，旧校准不会当成新格式的证据。没有跨不同查询复用重排分数。精简会改变分词和相关性分数，不能保证与全量文本同序；整体预测质量仍需独立回放验证。
+
+当原生重排后端（BGE 或百炼）通过硬过滤和规模检查的候选不超过最终样本上限（默认 20）时，跳过远程重排，保留全部候选；原生适配本来就接受所有候选，且下游对所选样本等权统计，排序不会改变该样本集合。证据 reason 显式标注跳过，utility 为占位值 0，不冒充模型相关性分数。超过上限时仍调用重排选取前 20；聊天后端仍逐项判断 usable，纯 Embedding 基线行为保持不变。版本更新会隔离旧检索校准。
+
 过滤在模型调用与缓存之前进行。缓存键包含模型版本、兼容身份与完整上下文。召回上限 40，重排后的联合情景上限 20；数量不足不放宽过滤。重排显式比较否定、条件、文件用途、规模、模型与控制策略；其 utility 仅排序，不是预测正确率。规模越出历史支持时冷启动，不虚构线性缩放关系。模型失败、无兼容样本或不适合参照的历史都进入冷启动。服务出错时已知费用是下界，`cost_complete=false`；预算启用时不会把未知费用当零。
 
 未配置语义服务时，只接受身份完整且执行前上下文完全相同的历史；这是明确的保守模式，不是 Embedding 替代品。此模式无法识别改写句，输出会明确标识 `exact_context`。模型和控制策略不完整、输入大小未知、样本不足或残差未校准，均保留低置信标记。
