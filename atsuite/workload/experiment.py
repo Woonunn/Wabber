@@ -114,7 +114,7 @@ def evaluate(traces: list[dict], output: Path) -> dict:
         trace = traces[index]
         if kind == 0:
             predictions[index] = model.begin(
-                trace["request_id"], trace["session_id"], timestamp
+                trace["request_id"], trace["session_id"], timestamp, descriptor=trace.get("request_context")
             )
         else:
             profile = extract_profile(trace)

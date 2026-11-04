@@ -53,10 +53,11 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
     if prompt is not None:
         import hashlib
         task={**task,'prompt':prompt,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest()}
-    from atsuite.workload import describe
-    descriptor=describe(prompt=task['prompt'],files=task['readiness']['inputs']['files'],
-                        tools=['prepare_workspace','execute_analysis','merge_artifacts','validate_result'] if workload=='DataSciBench' else [d['name'] for d in task['tool_definitions']],
-                        category=workload)
+    from atsuite.workload.context import describe_request
+    modes={bool(target.get('capture',capture)) for target in routing_context['targets'].values()} if router is not None else {bool(capture)}
+    if len(modes)!=1:raise ValueError('Routing targets must share the same planning mode')
+    descriptor=describe_request(task,config,workload,planning_mode='replay' if True in modes else 'live')
+    descriptor['control']['calibration']=calibration
     session_id=uuid.uuid4().hex;request_id=uuid.uuid4().hex
     if router is not None:request_id=routing_context.get('request_id',request_id)
     tracing=LangGraphTracingAdapter(TraceCollector(request_id,session_id,output))
@@ -137,9 +138,10 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
             from atsuite.tracing.storage import write_json
             from atsuite.workload import extract_profile
             trace=tracing.collector.snapshot()
-            trace.update(arrival_ns=arrival_ns,completed_ns=time.time_ns(),
+            trace.update(arrival_ns=arrival_ns,completed_ns=time.time_ns(),request_context=descriptor,
                          sessions_closed=sessions_closed,
                          request_status='success' if state['status']=='complete' else 'failed')
+            write_json(output/'trace.json',trace)
             profile=workload_model.observe(trace,descriptor=descriptor) if workload_model is not None else extract_profile(trace)
             write_json(output/'workload_profile.json',profile)
             if provider_model is not None:
@@ -168,7 +170,7 @@ def main():
     config=json.loads(a.config.read_text());output=a.output or ROOT/'results/phase2'/uuid.uuid4().hex
     from atsuite.workload import WorkloadModel
     from atsuite.tracing.storage import trace_path
-    model=(WorkloadModel.load(a.workload_model) if trace_path(a.workload_model).exists() else WorkloadModel()) if a.workload_model else None
+    model=(WorkloadModel.load(a.workload_model,retrieval_config=config.get("retrieval")) if trace_path(a.workload_model).exists() else WorkloadModel(retrieval_config=config.get("retrieval"))) if a.workload_model else None
     from atsuite.provider_model import ProviderModel
     provider_model=(ProviderModel.load(a.provider_model) if trace_path(a.provider_model).exists() else ProviderModel()) if a.provider_model else None
     provider_context=json.loads(a.provider_context.read_text()) if a.provider_context else None

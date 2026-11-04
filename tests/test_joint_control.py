@@ -13,6 +13,8 @@ from atsuite.routing import (
 )
 from atsuite.routing.cost import forecast_cost, total_cost
 from atsuite.workload import WorkloadModel
+from tests.workload_fixtures import describe, calibrate
+from atsuite.workload.descriptor import family_key
 from tests.test_provider_model import observation, pool
 from tests.test_workload import trace
 from tests.stage6_fixtures import tariff, bounds
@@ -95,12 +97,14 @@ def controller(*, start=1, retention=None, policy="joint", weights=None):
         p = observation()["profile"]
         p["request_id"] = f"reference-{i}"
         workload.update(p, 10000)
+    calibrate(workload, describe())
     router = OnlineRouter(
         workload,
         model,
         {"aws": levels[start]["pool"]},
         {"aws": start * 3},
         default_pool="aws",
+        enable_context_routing=True,
         execution_bounds={"aws": bounds()},
     )
     adapter = DelayedAdapter(start)
@@ -115,6 +119,8 @@ def controller(*, start=1, retention=None, policy="joint", weights=None):
         horizon_s=10,
         policy=policy,
     )
+    control.descriptors["task"] = describe()
+    control.descriptors[family_key(describe())] = describe()
     return control, adapter
 
 
@@ -161,12 +167,12 @@ class JointControlTests(unittest.TestCase):
         revision = {**row, "available_ns": 40000, "capacity_transition": False}
         with self.assertRaisesRegex(ValueError, "capacity_transition"):
             control.router.provider.update(revision)
-        decision = control.router.decide("new", "task", 0.5, as_of_ns=40000)
+        decision = control.router.decide("new", "task", 0.5, as_of_ns=40000, descriptor=describe())
         self.assertEqual(decision["candidates"][0]["prediction"]["sample_count"], 100)
 
     def test_missing_cost_unknown_task_read_failure_and_stale_policy(self):
         control, adapter = controller()
-        self.assertIsNotNone(control.tick({"unknown": 0.5}, now_ns=20000)["selected"])
+        self.assertIsNone(control.tick({"unknown": 0.5}, now_ns=20000)["selected"])
         result = control.tick({"task": 0.5}, now_ns=2_000_020_000)
         self.assertIsNotNone(result["selected"])
         self.assertIsNone(
@@ -488,7 +494,7 @@ class IntegrationBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(row["measurements"]["latency_s"], 0.00002)
         control.observe_arrival("rejected-in-harness", "task", 50000)
-        self.assertGreater(control.observed_rates(now_ns=50001)["global"], 0)
+        self.assertGreater(control.observed_rates(now_ns=50001)[family_key(None)], 0)
         late = control.router.decide(
             "expired", "task", 0.5, as_of_ns=121_000_000_001, arrival_ns=1
         )
@@ -517,10 +523,11 @@ class IntegrationBoundaryTests(unittest.TestCase):
                 row.update(id=f"ali-{target}-{i}", task_id="task", pool=level["pool"])
                 base.router.provider.update(row)
         pools = {k: v[1]["pool"] for k, v in levels.items()}
-        router = OnlineRouter(base.router.workload, base.router.provider, pools, {})
+        router = OnlineRouter(base.router.workload, base.router.provider, pools, {}, enable_context_routing=True)
         adapters = {k: DelayedAdapter() for k in pools}
         plans = candidate_plans(levels, [{"aws": 1, "ali": 0}, {"aws": 0, "ali": 1}])
         joint = JointController(router, adapters, levels, plans, FX, horizon_s=30)
+        joint.descriptors["task"] = describe()
         result = joint.tick({"task": 0.5}, now_ns=20000)
         self.assertEqual(result["selected"]["weights"], {"aws": 0, "ali": 1})
         self.assertEqual(result["selected"]["targets"]["aws"], 0)

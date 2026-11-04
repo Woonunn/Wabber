@@ -437,16 +437,17 @@ assert call('grep_text','one',pattern='def page',path='.')['matches']
             asyncio.run(graph.ainvoke({"user_prompt": "query", "iteration": 0}))
 
     def test_known_workload_context_learns_without_identical_task_id(self):
-        from atsuite.workload.descriptor import describe, distance
+        from atsuite.workload.descriptor import compatible, distance
+        from tests.workload_fixtures import describe
 
         left = describe(
-            prompt="Plan my trip.", tools=["flights"], category="TravelPlanner"
+            prompt="Plan my trip.", tools=["flights"]
         )
         right = describe(
-            prompt="Visit another city.", tools=["flights"], category="TravelPlanner"
+            prompt="Visit another city.", tools=["flights"]
         )
-        self.assertEqual(distance(left, right), 0)
-        self.assertEqual(distance(left, {**right, "category": "ClaudeCodeReview"}), 1)
+        self.assertEqual(distance(left, right), 1)
+        self.assertTrue(compatible(left, right))
 
     def test_fixed_policy_fallback_needs_bounds_and_respects_admission(self):
         from tests.test_routing import RoutingTests

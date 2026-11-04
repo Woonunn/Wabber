@@ -7,16 +7,14 @@ from pathlib import Path
 
 from atsuite.provider_model import ProviderModel
 from atsuite.routing import OnlineRouter
-from atsuite.workload import WorkloadModel, describe
+from atsuite.workload import WorkloadModel
 from atsuite.workload.descriptor import (
-    distance,
     family_key,
-    legacy_distance,
-    validate_descriptor,
 )
 from tests.stage6_fixtures import bounds, tariff
 from tests.test_provider_model import observation, pool, profile
 from tests.test_workload import trace
+from tests.workload_fixtures import describe
 
 
 def router_fixture(
@@ -46,12 +44,17 @@ def router_fixture(
         row["pool"] = pools["known"]
         row["profile"]["descriptor"] = descriptor
         provider.update(row)
+    workload.errors = [{"request_id": "calibration:" + str(i), "available_ns": 499,
+                        "descriptor": descriptor, "revision": workload.retriever.revision,
+                        "metrics": {k: 0.1 for k in ("tool_elapsed_s", "state_bytes", "llm_idle_s")}}
+                       for i in range(10)]
     router = OnlineRouter(
         workload,
         provider,
         pools,
         dict.fromkeys(pools, 3),
         default_pool="known",
+        enable_context_routing=True,
         execution_bounds={k: bounds() for k in pools},
         budget=budget,
         exploration={
@@ -62,58 +65,6 @@ def router_fixture(
         },
     )
     return router, descriptor
-
-
-class SemanticTests(unittest.TestCase):
-    def test_intent_beats_superficial_similarity_and_shape(self):
-        a = describe(
-            prompt="Compute mean and variance", files=[{"name": "a.csv", "bytes": 1000}]
-        )
-        b = describe(
-            prompt="Train a neural classifier", files=[{"name": "b.csv", "bytes": 1000}]
-        )
-        self.assertLess(legacy_distance(a, b), 0.1)
-        self.assertGreater(distance(a, b), 0.5)
-        self.assertNotEqual(family_key(a), family_key(b))
-        c = describe(
-            prompt="Calculate the mean and variance. " + "Please be careful. " * 100,
-            files=[{"name": "b.csv", "bytes": 1000}],
-        )
-        self.assertEqual(distance(a, c), 0)
-        self.assertEqual(family_key(a), family_key(c))
-        self.assertGreater(
-            distance(
-                describe(prompt="Train classifier", hints={"rows": 100}),
-                describe(prompt="Train classifier", hints={"rows": 1000000}),
-            ),
-            0.5,
-        )
-
-    def test_family_distributions_unknown_and_legacy(self):
-        model = WorkloadModel()
-        for i, prompt in enumerate(("Compute mean", "Train classifier")):
-            p = profile()
-            p["request_id"] = str(i)
-            p["metrics"]["tool_elapsed_s"] = 1 if i == 0 else 100
-            model.update(p, 100, descriptor=describe(prompt=prompt))
-        q = model.predict(101, descriptor=describe(prompt="Compute variance"))
-        self.assertEqual(q["metrics"]["tool_elapsed_s"]["mean"], 1)
-        self.assertFalse(q["unknown_request"])
-        for prompt in ("Do something new", "Simulate Monte Carlo trajectories"):
-            q = model.predict(101, descriptor=describe(prompt=prompt))
-            self.assertTrue(q["unknown_request"])
-            self.assertTrue(q["low_confidence"])
-        observed = model.observe(
-            trace("hook"), 200, descriptor=describe(prompt="Compute mean")
-        )
-        self.assertEqual(observed["descriptor"]["semantic"]["primary"], "statistics")
-        old = describe(prompt="Compute mean")
-        old.pop("semantic")
-        validate_descriptor(old)
-        self.assertEqual(distance(old, old), 0)
-        self.assertGreater(distance(old, describe(prompt="Compute mean")), 0.5)
-        with self.assertRaises(ValueError):
-            validate_descriptor({**old, "observed_dag": []})
 
 
 class ExplorationTests(unittest.TestCase):
@@ -141,7 +92,7 @@ class ExplorationTests(unittest.TestCase):
             ]
         )
         for field, val in (("tools", ["untrusted"]), ("hints", {"memory_mb": 999999})):
-            invalid = {**d, field: val}
+            invalid = describe(prompt=d["prompt"], tools=val) if field == "tools" else {**d, field: val}
             self.assertIsNone(
                 router.decide(field, descriptor=invalid, as_of_ns=1000)["selected"]
             )
@@ -246,8 +197,8 @@ class ExplorationTests(unittest.TestCase):
         self.assertFalse(any(r["selected"] == "expensive" for r in results))
 
     def test_learned_pool_can_be_exploited_under_fixed_capacity(self):
-        from tests.test_joint_control import controller
         from atsuite.routing import Capacity
+        from tests.test_joint_control import controller
 
         control, _ = controller(policy="routing")
         router, d = router_fixture(epsilon=0, promising_rate=0.001)
@@ -301,7 +252,7 @@ class ExplorationTests(unittest.TestCase):
 class CapacityExplorationTests(unittest.TestCase):
     def test_lease_reserves_before_scaling_and_settles_only_after_readback(self):
         from atsuite.routing import JointController, candidate_plans
-        from tests.test_joint_control import DelayedAdapter, FX
+        from tests.test_joint_control import FX, DelayedAdapter
 
         router, descriptor = router_fixture()
         levels, adapters = {}, {}
@@ -389,7 +340,7 @@ class ExperimentTests(unittest.TestCase):
             r["task_id"] = name
             rows.append(r)
         before = evaluate(
-            rows, descriptors, {"aws_lambda": tariff()}, held_family="training"
+            rows, descriptors, {"aws_lambda": tariff()}, held_family="training", family_labels={"stat": "statistics", "train-a": "training", "train-b": "training"}
         )
         self.assertEqual(before["held_tasks"], ["train-a", "train-b"])
         self.assertTrue(
@@ -401,7 +352,7 @@ class ExperimentTests(unittest.TestCase):
         for row in rows[3:]:
             row["profile"]["metrics"]["tool_elapsed_s"] = 1000000
         after = evaluate(
-            rows, descriptors, {"aws_lambda": tariff()}, held_family="training"
+            rows, descriptors, {"aws_lambda": tariff()}, held_family="training", family_labels={"stat": "statistics", "train-a": "training", "train-b": "training"}
         )
         self.assertEqual(
             [p["cost"] for p in before["predictions"]],
@@ -436,7 +387,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertTrue(panel["source"]["commit_sha"])
         self.assertTrue(
             any(
-                c["descriptor"]["semantic"]["primary"] == "iterative"
+                c["descriptor"]["prompt"] == c["prompt"]
                 for c in panel["cases"]
             )
         )

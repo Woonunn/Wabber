@@ -1,106 +1,13 @@
-# Wabber Stage 7: semantic workloads and exploration
+# Wabber context-based routing
 
-`OnlineRouter` predicts from information available at admission and binds the whole
-Agent Session to one execution pool. It has no SLO, p95, risk-bound or same-task
-sample-count admission gate. p50/p95/p99/mean remain descriptive statistics.
-MCP retains in-process state; FaaS restores/persists state at each Tool invocation.
+请求预测、严格工具/Harness 隔离、模型配置、迁移、旁路与验收流程见
+[Context prediction](../workload/README.md)。生产链路已经删除人工意图标签、关键词正则和全局/资源先验回退。
 
-## Admission and feedback
+`OnlineRouter` 默认只记录新预测，实际执行走受约束默认方案；验证后显式设置
+`enable_context_routing=True`。`shadow=True` 计算候选决策且不预留执行容量。
+兼容身份或原始上下文缺失的旧历史不会参与预测。所有路由保留容量、工具、内存、超时与预算约束。
 
-```python
-from atsuite.workload import WorkloadModel, describe
-from atsuite.provider_model import ProviderModel
-from atsuite.routing import OnlineRouter
-
-router = OnlineRouter(
-    WorkloadModel(initial_profiles=independent_profiling_profiles),
-    ProviderModel(tariffs=dated_tariff_cards),
-    pools, verified_session_limits,
-    cost_weight=1, latency_weight=0.001,
-    default_pool="verified-default",
-    execution_bounds=validated_bounds,
-    budget=run_budget, fx=dated_currency_reference,
-)
-descriptor = describe(prompt=prompt, files=input_metadata, tools=available_tools)
-decision = router.decide(request_id, load_rps=current_load, descriptor=descriptor)
-# Dispatch only if selected is not None, using the bound pool and execution_bounds.
-# Complete failed attempts too, after the existing executor has drained pending RPCs.
-router.complete(request_id, trace)
-```
-
-Stage 7 configuration, validation and fair comparison commands are documented in
-[STAGE7_VALIDATION](../../experiments/exp1/STAGE7_VALIDATION.md).
-
-`task` remains an optional second argument for experiment bookkeeping. It never
-selects training samples or determines admission. `files` contains `{name, bytes}`;
-`hints` optionally contains declared `cpu_s`, `memory_mb`, `state_bytes`, `rows`,
-`columns`, and `features`.
-Descriptors retain lengths, file types/sizes and Tool capabilities, and add a
-versioned computational intent signature extracted from the Prompt. Known-family
-matching requires the observed combination of intent tags, compatible resource
-scale, and the same Tools/encoding. A priority-selected `primary` label cannot hide
-a new secondary operation. Legacy snapshots remain readable.
-
-An unseen intent can use a `resource_prior` drawn from nearby declared sizes and
-hints with the same Tools, even across file encodings. This prior remains
-`unknown_request=true` and low confidence. Missing file sizes are not zero-byte
-inputs. Without comparable resource evidence, only an explicitly supplied initial
-prior is available; otherwise prediction metrics are missing. No file-format or
-benchmark-specific memory/state estimator is used.
-
-Every prediction retains at most 20 joint profiles, including global/initial
-priors; equal-distance peers prefer recent available observations. Router and
-JointController consume this same sample without truncating it again. Compute,
-state, LLM time and call-structure correlations are preserved; state access volume
-is not renamed or imputed as peak memory. Missing input sizes keep confidence low.
-
-Normal routing ranks feasible candidates with complete, comparable cost forecasts
-by the configured cost/latency objective even when history or model confidence is
-low. Confidence remains visible in diagnostics and exploration; it is not an
-admission constraint. Cost-only routing does not require an unused latency
-forecast. Unknown/exhausted capacity, unsupported Tools and actual execution
-deadlines still prevent dispatch. Missing cost estimates or incomparable currencies
-still use the validated fallback rather than fabricated zero costs.
-
-Optional budgeted contextual epsilon-greedy explores feasible, analytically
-promising pools and records the full probability distribution. Only chosen-pool
-feedback trains the online model. Unknown resource priors do not bypass validated
-default execution, capacity, timeout or budget constraints.
-
-The `stage7 holdout` evaluator also accepts a configuration containing `descriptors`
-and independent `family_labels` for any workload, without loading the DataSciBench
-panel. Its default seeded reservoir retains at most `history_limit` already-visible
-attempts per provider, instead of freezing the first arrivals. Legacy/semantic
-variants use identical selected attempts; selected IDs are recorded. For historical
-reproduction, set `history_sampling` to `first`. The `evaluate()` API keeps `first`
-as its backward-compatible default. Reservoir evaluation keeps held-out families
-frozen (`adaptive=False`); normal online routing is unaffected. Derived-label
-holdouts are explicitly labeled diagnostics, not semantic accuracy measurements.
-
-Each `execution_bounds[pool]` has `timeout_s`, `max_cost`, `currency`, `tools` and
-`evidence`. Evidence must cover the actual supported execution environment and the
-worst-case cost of bounded execution, including remote cleanup/retention. These are
-trusted deployment configuration, not bounds inferred from p95 or supplied by a
-Prompt. Every admitted request atomically reserves its cap. Completion consumes
-that cap unless the caller supplies authoritative attributable `actual_cost` in
-the router's budget currency. Shared infrastructure is reserved by the existing
-campaign budget ledger, separately from request caps. An empirical cost range is
-never a hard spending limit.
-
-Unknown capacity, exhausted concurrency, unsupported Tools, elapsed execution
-deadlines and exhausted budgets still prevent dispatch. A validated default cannot
-override those checks. Repeated request IDs return frozen decisions; migration and
-automatic retry are forbidden. `shadow=True` reserves no capacity or budget.
-Standalone callers must enforce the returned execution bounds in their executor.
-The LangGraph hook enforces Session deadlines and retains existing Tool timeouts,
-iteration limits, sandbox restrictions and pending-RPC cleanup. Cleanup can outlast
-the application deadline; it must finish before capacity is released.
-
-`complete()` attaches the frozen Descriptor to the Workload profile and updates
-platform timing calibration from complete Tool runtime counters. Native profiles
-retain `execution_pool` (provider, environment and resources). Availability is
-strictly `< decision_ns`, including delayed provider evidence revisions. No result
-from the current request is used before dispatch.
+新检索的费用、耗时和误差校准参与评估。历史 provider 不是最优标签；G/S/D 联合情景交给当前平台模型定价与计时。
 
 ## Cost and latency
 
@@ -142,10 +49,8 @@ added a second time. It mixes distributions, never adds component p95s.
 
 Speed ratios require an explicit shared `reference_id` on profiling inputs; a
 tariff's declared `tool_scale` must name that same reference. Ordinary completion
-profiles are target-native observations, not common benchmarks. A foreign native
-profile uses descriptor-matched observations from the target pool when available;
-without those or a shared reference, its estimate remains uncalibrated and routing
-falls back. Physical state-transfer counters are reused only for the exact source
+profiles are target-native observations, not common benchmarks. A foreign native profile is never replaced by a target-provider historical execution.
+Without an explicit shared reference its estimate remains uncalibrated. Physical state-transfer counters are reused only for the exact source
 execution environment. Other modes use their own logical-state transport estimate.
 
 Confidence checks both resource/load coverage and usable calibration evidence.
@@ -177,7 +82,7 @@ Existing adapters, polling, read-back, cooldown, capacity levels, Session drain,
 failed-teardown holds, lifetime retention and budget-reserved cloud execution are
 retained. Scaling targets never count as ready until read back. A default fallback
 under JointController needs fresh READY capacity and cannot bypass pending scaling
-or draining. Offered load is grouped by resource family, including rejected
+or draining. Offered load is grouped by the full arrival context, including rejected
 arrivals; late arrival metadata updates that family without double-counting.
 
 Stage 5 `risk` configuration is replaced by `routing` options above. Per-task
@@ -187,7 +92,7 @@ still require independent capacity evidence. The legacy `forecast_cost` helper i
 retained only for old accounting callers/tests. [JOINT_CONTROL.md](JOINT_CONTROL.md)
 is the archived Stage 5 experiment contract; its SLO and historical pricing rules
 are superseded here. The old `routing.evaluate` remains an archived SLO diagnostic;
-use `routing.generalization` for Stage 6 evaluation.
+use `workload.validation` for the current context-prediction evaluation.
 
 The LangGraph runner accepts `prompt=` for a new Prompt over a supported DataSciBench
 dataset/validator. It uses live planning and disallows replaying a different Prompt

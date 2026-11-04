@@ -14,6 +14,7 @@ from atsuite.workload import WorkloadModel
 from tests.test_provider_model import observation, pool
 from tests.test_workload import trace
 from tests.stage6_fixtures import tariff, bounds
+from tests.workload_fixtures import describe, calibrate
 
 
 class RoutingTests(unittest.TestCase):
@@ -23,8 +24,14 @@ class RoutingTests(unittest.TestCase):
             row = observation(i)
             row["task_id"] = "task"
             model.update(row)
+        workload = WorkloadModel()
+        for i in range(3):
+            p = observation(i)["profile"]
+            p["request_id"] = "seed:" + str(i)
+            workload.update(p, 10)
+        calibrate(workload, describe())
         return OnlineRouter(
-            WorkloadModel(),
+            workload,
             model,
             {"aws": pool()},
             {"aws": limit},
@@ -79,13 +86,13 @@ class RoutingTests(unittest.TestCase):
         row["measurements"]["latency_s"] = 999
         router.provider.update(row)
         self.assertEqual(
-            router.decide("x", "task", 0.5, as_of_ns=21000, shadow=True)["candidates"][
+            router.decide("x", "task", 0.5, as_of_ns=21000, shadow=True, descriptor=describe())["candidates"][
                 0
             ]["prediction"]["sample_count"],
             100,
         )
         self.assertEqual(
-            router.decide("y", "task", 0.5, as_of_ns=21001, shadow=True)["candidates"][
+            router.decide("y", "task", 0.5, as_of_ns=21001, shadow=True, descriptor=describe())["candidates"][
                 0
             ]["prediction"]["sample_count"],
             100,
@@ -151,8 +158,12 @@ class RoutingTests(unittest.TestCase):
             execution_bounds={"agent": bounds()},
         )
         # A prior profile supplies joint workload input; empty history cannot price it.
-        workload.update(observation()["profile"], 10000)
-        result = router.decide("priced", "task", 0.5, as_of_ns=20000, shadow=True)
+        for i in range(3):
+            p = observation()["profile"]
+            p["request_id"] = "pricing:" + str(i)
+            workload.update(p, 10000)
+        calibrate(workload, describe())
+        result = router.decide("priced", "task", 0.5, as_of_ns=20000, shadow=True, descriptor=describe())
         self.assertTrue(result["cost_comparable"])
         self.assertEqual(result["selected"], "agent")
         self.assertNotIn("slo_s", result)
@@ -164,7 +175,7 @@ class RoutingTests(unittest.TestCase):
         revision["measurements"]["queue_s"] = 0.1
         router.provider.update(revision)
         router.provider.update(revision)
-        result = router.decide("later", "task", 0.5, as_of_ns=30000, shadow=True)
+        result = router.decide("later", "task", 0.5, as_of_ns=30000, shadow=True, descriptor=describe())
         self.assertEqual(result["candidates"][0]["prediction"]["sample_count"], 100)
         revision.update(available_ns=25000, task_id="different")
         with self.assertRaisesRegex(ValueError, "request context"):
@@ -274,7 +285,7 @@ class CaptureRoutingTests(unittest.IsolatedAsyncioTestCase):
 class ConfidenceRankingTests(unittest.TestCase):
     def router(self):
         from unittest.mock import Mock
-        from atsuite.workload import describe
+        from tests.workload_fixtures import describe
 
         pools = {
             name: {**pool(), "environment": name} for name in ["cheap", "experienced"]
@@ -303,7 +314,10 @@ class ConfidenceRankingTests(unittest.TestCase):
 
         model.predict = Mock(side_effect=prediction)
         workload = Mock()
-        workload.predict.return_value = {"joint_profiles": [], "low_confidence": True}
+        import threading
+        workload.lock = threading.RLock()
+        workload.samples = {}
+        workload.predict.return_value = {"joint_profiles": [], "low_confidence": True, "retrieval": {"cost": 0, "currency": None, "latency_s": 0}}
         execution = bounds()
         execution.pop("max_cost")
         router = OnlineRouter(
@@ -312,29 +326,39 @@ class ConfidenceRankingTests(unittest.TestCase):
             pools,
             dict.fromkeys(pools, 1),
             default_pool="experienced",
+            enable_context_routing=True,
             execution_bounds={name: copy.deepcopy(execution) for name in pools},
         )
         return router, describe(prompt="Compute mean", tools=["python"])
 
-    def test_uncertain_cheaper_pool_stays_in_normal_ranking_at_low_and_high_load(self):
+    def test_uncalibrated_workload_uses_validated_fallback_at_low_and_high_load(self):
         for load in [0.5, 100]:
             router, descriptor = self.router()
             decision = router.decide(
                 "new", load_rps=load, descriptor=descriptor, as_of_ns=10000, shadow=True
             )
-            self.assertEqual(decision["selected"], "cheap")
-            self.assertEqual(decision["reason"], "cost_latency_objective")
+            self.assertEqual(decision["selected"], "experienced")
+            self.assertEqual(decision["reason"], "validated_default")
             cheap = next(c for c in decision["candidates"] if c["key"] == "cheap")
             self.assertIn("cost_prediction_unreliable", cheap["prediction_flags"])
             self.assertIn("workload_history_insufficient", cheap["prediction_flags"])
 
+    def test_uncalibrated_platform_cost_cannot_win_with_calibrated_workload(self):
+        router, descriptor = self.router()
+        router.workload.predict.return_value["low_confidence"] = False
+        decision = router.decide("platform-uncertain", descriptor=descriptor, as_of_ns=10000)
+        self.assertEqual(decision["selected"], "experienced")
+        self.assertNotIn("cheap", decision["pareto"])
+
     def test_cost_only_ranking_does_not_require_an_unused_latency_prediction(self):
         router, descriptor = self.router()
         router.latency_weight = 0
+        router.workload.predict.return_value["low_confidence"] = False
         original = router.provider.predict.side_effect
 
         def predict(*args, **kwargs):
             result = original(*args, **kwargs)
+            result["pools"][0]["confidence"]["cost"]["reliable"] = True
             if args[1][0]["environment"] == "cheap":
                 result["pools"][0]["latency"]["mean"] = None
             return result

@@ -6,12 +6,12 @@ import math
 import time
 from collections import Counter, deque
 
+from atsuite.provider_model.analytical import pool_cost
 from atsuite.provider_model.observation import validate_pool
 from atsuite.routing.capacity import count, session_retention_s
-from atsuite.provider_model.analytical import pool_cost
 from atsuite.routing.objective import pareto
-from atsuite.workload.descriptor import family_key
 from atsuite.routing.router import OnlineRouter
+from atsuite.workload.descriptor import family_key
 from atsuite.workload.profile import number
 
 
@@ -339,7 +339,8 @@ class JointController:
             )
         self.draining.pop(key, None)
 
-    def _evaluate(self, plan, task_rates, now, queued):
+    def _evaluate(self, plan, task_rates, now, queued, forecasts=None):
+        forecasts = {} if forecasts is None else forecasts
         pools = {k: self.levels[k][v]["pool"] for k, v in plan["targets"].items()}
         limits = {
             k: self.levels[k][v]["session_limit"] for k, v in plan["targets"].items()
@@ -347,12 +348,21 @@ class JointController:
         offered = sum(task_rates.values())
         rates = {k: offered * w for k, w in plan["weights"].items()}
         flags, duration, predictions, latencies = [], {}, {}, []
+        if not self.router.enable_context_routing:
+            flags.append("context_routing_shadow")
+        inference_cost = 0.0
         for family, rate in task_rates.items():
             if rate == 0:
                 continue
-            workload = self.router.workload.predict(
-                now, descriptor=self.descriptors.get(family)
-            )
+            if family not in forecasts:
+                forecasts[family] = self.router.workload.predict(now, descriptor=self.descriptors.get(family))
+            workload = forecasts[family]
+            overhead = workload["retrieval"]
+            conversion = self.fx["rates"].get(overhead["currency"], 1 if not overhead["cost"] else None)
+            if conversion is None or not overhead.get("cost_complete", True):
+                flags.append("prediction_cost_unknown")
+            else:
+                inference_cost += rate * self.horizon_s * overhead["cost"] * conversion
             for key, pool in pools.items():
                 if not plan["weights"][key]:
                     continue
@@ -372,7 +382,7 @@ class JointController:
                     flags.append(f"{key}:unknown_session_duration")
                 else:
                     duration[key] = max(duration.get(key, 0), seconds)
-                    latencies.append(rate / offered * plan["weights"][key] * mean)
+                    latencies.append(rate / offered * plan["weights"][key] * (mean + overhead["latency_s"]))
         costs, demand = {}, {}
         for key, target in plan["targets"].items():
             level, state = self.levels[key][target], self.snapshots.get(key)
@@ -477,7 +487,8 @@ class JointController:
             "predicted_latency_s": sum(latencies) if latencies else 0.0,
             "demand": demand,
             "costs": costs,
-            "predicted_total": sum(c["total"] for c in costs.values())
+            "prediction_cost": inference_cost,
+            "predicted_total": inference_cost + sum(c["total"] for c in costs.values())
             if len(costs) == len(pools)
             else None,
         }
@@ -531,9 +542,17 @@ class JointController:
                         self._submit(key, target, now)
                 return copy.deepcopy(self.last_report)
             self.last_tick = now
-            candidates = [
-                self._evaluate(p, task_rates, now, queued) for p in self.plans
-            ]
+            forecasts = {}
+            candidates = [self._evaluate(p, task_rates, now, queued, forecasts) for p in self.plans]
+            prediction_cost = 0.0
+            for forecast in forecasts.values():
+                overhead = forecast["retrieval"]
+                self.router.prediction_costs[overhead["currency"] or "local"] += overhead["cost"]
+                conversion = self.fx["rates"].get(overhead["currency"], 1 if not overhead["cost"] else None)
+                if conversion is not None:
+                    prediction_cost += overhead["cost"] * conversion
+            if apply and self.router.enable_context_routing:
+                self.router.spent += prediction_cost
             if self.policy == "joint":
                 feasible = [c for c in candidates if not c["flags"]]
                 selected = (

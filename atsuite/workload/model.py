@@ -2,14 +2,16 @@
 
 import copy
 import json
+import math
 import threading
 import time
 from collections import Counter, defaultdict
 from pathlib import Path
 
 from atsuite.tracing.storage import read_text, write_json
+from atsuite.workload.descriptor import compatible, context_key, validate_descriptor
 from atsuite.workload.profile import METRICS, extract_profile, number
-from atsuite.workload.descriptor import distance, resource_distance, validate_descriptor
+from atsuite.workload.retrieval import ContextBackend, ContextRetriever
 
 
 def distribution(values: list, total: int) -> dict:
@@ -41,11 +43,23 @@ def distribution(values: list, total: int) -> dict:
 
 
 class WorkloadModel:
-    """Resource-family empirical samples; thread-safe within one process."""
+    """Conditional joint execution scenarios with causal feedback calibration."""
 
-    def __init__(self, initial_profiles: list[dict] | None = None) -> None:
+    def __init__(
+        self,
+        initial_profiles: list[dict] | None = None,
+        *,
+        retrieval_config=None,
+        retriever=None,
+    ) -> None:
         # shortcut: retain exact samples in memory; use bounded summaries when volume warrants it.
         self.initial_profiles = copy.deepcopy(initial_profiles or [])
+        self.retrieval_config = copy.deepcopy(retrieval_config)
+        self.retriever = retriever or ContextRetriever(
+            ContextBackend(retrieval_config) if retrieval_config else None
+        )
+        self.pending = {}
+        self.errors = []
         self.samples = {}
         self.active = {}
         self.lock = threading.RLock()
@@ -69,10 +83,12 @@ class WorkloadModel:
             self.active[request_id] = {
                 "session_id": session_id,
                 "arrival_ns": arrival_ns,
+                "descriptor": copy.deepcopy(descriptor),
             }
             prediction["concurrent_sessions"] = len(
                 {v["session_id"] for v in self.active.values()}
             )
+            self.record_prediction(request_id, prediction)
             prediction["request_id"] = request_id
             return prediction
 
@@ -112,6 +128,16 @@ class WorkloadModel:
             key = profile["request_id"]
             profile = copy.deepcopy(profile)
             registered = self.active.get(key, {})
+            frozen = self.pending.get(key)
+            if frozen and frozen.get("descriptor") is not None:
+                if profile.get("descriptor") is None:
+                    profile["descriptor"] = copy.deepcopy(frozen["descriptor"])
+                elif context_key(profile["descriptor"]) != context_key(
+                    frozen["descriptor"]
+                ):
+                    raise ValueError(
+                        "Completion context differs from frozen arrival context"
+                    )
             if profile.get("arrival_ns") is None:
                 profile["arrival_ns"] = registered.get("arrival_ns")
             previous = self.samples.get(key)
@@ -131,6 +157,24 @@ class WorkloadModel:
                 or profile.get("completed_ns") is not None
             ):
                 self.active.pop(key, None)
+            if frozen and profile["status"] != "incomplete":
+                errors = {
+                    k: abs(profile["metrics"][k] - frozen["metrics"][k]["p50"])
+                    for k in METRICS
+                    if number(profile["metrics"].get(k))
+                    and number(frozen["metrics"][k]["p50"])
+                    and profile["status"] == "success"
+                }
+                self.errors.append(
+                    {
+                        "request_id": key,
+                        "available_ns": available_ns,
+                        "descriptor": copy.deepcopy(profile.get("descriptor")),
+                        "revision": frozen["retrieval"]["revision"],
+                        "metrics": errors,
+                    }
+                )
+                self.pending.pop(key, None)
             self.samples[key] = {"available_ns": available_ns, "profile": profile}
             return copy.deepcopy(profile)
 
@@ -147,54 +191,43 @@ class WorkloadModel:
                 for s in self.samples.values()
                 if s["available_ns"] < as_of_ns
                 and (
-                    s["profile"].get("completed_ns") is None
-                    or s["profile"]["completed_ns"] < as_of_ns
+                    number(s["profile"].get("completed_ns"))
+                    and s["profile"]["completed_ns"] < as_of_ns
                 )
             ]
-            samples = sorted(
+            eligible = [
+                p for p in eligible if compatible(descriptor, p.get("descriptor"))
+            ]
+            successes = sorted(
                 (p for p in eligible if p["status"] == "success"),
                 key=lambda p: (
                     -self.samples[p["request_id"]]["available_ns"],
                     p["request_id"],
                 ),
             )
-            basis, nearest, resource_nearest = "global", None, None
-            if descriptor is not None:
-                ranked = sorted(
-                    (
-                        (
-                            distance(descriptor, p["descriptor"]),
-                            -self.samples[p["request_id"]]["available_ns"],
-                            -i,
-                            p,
-                        )
-                        for i, p in enumerate(samples)
-                        if p.get("descriptor") is not None
-                    ),
-                    key=lambda item: item[:3],
-                )
-                nearest = ranked[0][0] if ranked else None
-                similar = [p for d, _, _, p in ranked if d <= 0.5][:20]
-                if similar:
-                    samples, basis = similar, "resource_family"
-                elif descriptor.get("semantic"):
-                    # A resource prior never establishes that an unseen intent is known.
-                    peers = sorted(
-                        (
-                            (resource_distance(descriptor, p["descriptor"]), i, p)
-                            for i, p in enumerate(samples)
-                            if p.get("descriptor")
-                            and set(p["descriptor"]["tools"])
-                            == set(descriptor["tools"])
-                        ),
-                        key=lambda item: item[:2],
-                    )
-                    resource_nearest = peers[0][0] if peers else None
-                    samples = [p for d, _, p in peers if d <= 0.5][:20]
-                    basis = "resource_prior"
-            if not samples:
-                samples, basis = copy.deepcopy(self.initial_profiles), "initial_prior"
-            samples = samples[:20]
+            # Initial profiling is subject to the same identity and availability gates.
+            priors = [
+                p
+                for p in self.initial_profiles
+                if p.get("status") == "success"
+                and number(p.get("available_ns"))
+                and p["available_ns"] < as_of_ns
+                and number(p.get("completed_ns"))
+                and p["completed_ns"] < as_of_ns
+                and compatible(descriptor, p.get("descriptor"))
+            ]
+            known_ids = {p["request_id"] for p in successes}
+            priors = {
+                p["request_id"]: p for p in priors if p["request_id"] not in known_ids
+            }
+            samples, retrieval = self.retriever.select(
+                descriptor, successes + list(priors.values())
+            )
+            # Do not trust a backend to enforce isolation on our behalf.
+            samples = [
+                p for p in samples if compatible(descriptor, p.get("descriptor"))
+            ][:20]
+            basis = retrieval["match_basis"] if samples else "cold_start"
             n = len(samples)
             metrics = {
                 k: distribution(
@@ -212,29 +245,40 @@ class WorkloadModel:
                 )
                 for route in p["workflow"]["routes"]:
                     routes[route["node"]][tuple(route["targets"])] += 1
+            calibration = self._calibration(descriptor, as_of_ns, metrics)
+            missing = [k for k, v in metrics.items() if v["missing"] or not v["n"]]
+            missing_context = [
+                k
+                for k in ("model", "control")
+                if not descriptor or descriptor.get(k) is None
+            ]
+            if (
+                descriptor
+                and descriptor.get("model") is not None
+                and not descriptor["model"].get("revision")
+            ):
+                missing_context.append("model.revision")
+            attempts = sum(p["status"] != "incomplete" for p in eligible)
+            failures = sum(p["status"] == "failed" for p in eligible)
             return {
                 "as_of_ns": as_of_ns,
                 "sample_count": n,
                 "match_basis": basis,
-                "nearest_distance": nearest,
-                "resource_nearest_distance": resource_nearest,
-                "eligible_success_count": sum(
-                    p["status"] == "success" for p in eligible
-                ),
-                "unknown_request": descriptor is not None
-                and basis != "resource_family",
+                "eligible_success_count": len(successes),
+                "unknown_request": not samples,
                 "descriptor": copy.deepcopy(descriptor),
                 "joint_profiles": copy.deepcopy(samples),
+                "scenario_weights": [1 / n] * n if n else [],
+                "retrieval": retrieval,
+                "uncertainty": calibration,
+                "missing_metrics": missing,
+                "missing_context": missing_context,
+                "observed_failure_rate": failures / attempts if attempts else None,
                 "status_counts": dict(Counter(p["status"] for p in eligible)),
                 "low_confidence": n < 3
-                or basis == "initial_prior"
-                or (
-                    descriptor is not None
-                    and (
-                        basis != "resource_family"
-                        or descriptor["unknown_file_sizes"] > 0
-                    )
-                )
+                or not calibration["calibrated"]
+                or bool(missing_context)
+                or bool(descriptor and descriptor["unknown_file_sizes"])
                 or any(p["source"] == "capture" for p in samples),
                 "metrics": metrics,
                 "workflow": {
@@ -311,6 +355,59 @@ class WorkloadModel:
                 },
             }
 
+    def record_prediction(self, request_id: str, prediction: dict) -> None:
+        """Retain pre-execution forecasts for independent, subsequent residuals."""
+        with self.lock:
+            if request_id in self.pending and context_key(
+                self.pending[request_id].get("descriptor")
+            ) != context_key(prediction.get("descriptor")):
+                raise ValueError("Request prediction context already frozen")
+            if request_id not in self.samples:
+                self.pending.setdefault(request_id, copy.deepcopy(prediction))
+
+    def _calibration(self, descriptor, as_of_ns, metrics):
+        errors = [
+            e
+            for e in self.errors
+            if e["available_ns"] < as_of_ns
+            and e["revision"] == self.retriever.revision
+            and compatible(descriptor, e["descriptor"])
+            and e["descriptor"].get("model") == descriptor.get("model")
+            and e["descriptor"].get("control") == descriptor.get("control")
+        ]
+        intervals = {}
+        for key in METRICS:
+            residuals = sorted(
+                e["metrics"][key] for e in errors if number(e["metrics"].get(key))
+            )
+            # Finite sample absolute residual interval, never embedding confidence.
+            rank = math.ceil((len(residuals) + 1) * 0.9)
+            radius = (
+                residuals[rank - 1]
+                if len(residuals) >= 10 and rank <= len(residuals)
+                else None
+            )
+            center = metrics[key]["p50"]
+            intervals[key] = {
+                "n": len(residuals),
+                "lower": max(0, center - radius)
+                if center is not None and radius is not None
+                else None,
+                "upper": center + radius
+                if center is not None and radius is not None
+                else None,
+            }
+        return {
+            "method": "prequential_absolute_residual",
+            "nominal_coverage": 0.9,
+            "calibrated": all(
+                intervals[k]["lower"] is not None
+                for k in ("tool_elapsed_s", "state_bytes", "llm_idle_s")
+            ),
+            "intervals": intervals,
+            "missing_information": "Intervals assume exchangeable future residuals; no coverage guarantee under drift",
+        }
+
     def save(self, path: Path) -> None:
         """Atomically persist samples; active requests are intentionally process-local."""
         with self.lock:
@@ -318,19 +415,30 @@ class WorkloadModel:
             write_json(
                 Path(path),
                 {
-                    "schema_version": 1,
+                    "schema_version": 2,
+                    "retrieval_config": self.retrieval_config,
+                    "errors": self.errors,
                     "samples": list(self.samples.values()),
                     "initial_profiles": self.initial_profiles,
                 },
             )
 
     @classmethod
-    def load(cls, path: Path) -> "WorkloadModel":
+    def load(
+        cls, path: Path, *, retriever=None, retrieval_config=None
+    ) -> "WorkloadModel":
         """Load a model snapshot without changing observation availability times."""
         payload = json.loads(read_text(Path(path)))
-        if payload.get("schema_version") != 1:
+        if payload.get("schema_version") not in (1, 2):
             raise ValueError("Unsupported workload model schema")
-        model = cls(payload.get("initial_profiles"))
+        model = cls(
+            payload.get("initial_profiles"),
+            retrieval_config=retrieval_config
+            if retrieval_config is not None
+            else payload.get("retrieval_config"),
+            retriever=retriever,
+        )
+        model.errors = payload.get("errors", [])
         for sample in payload["samples"]:
             model.update(sample["profile"], sample["available_ns"])
         return model

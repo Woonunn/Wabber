@@ -12,14 +12,14 @@ from atsuite.provider_model.analytical import predict_cost, validate_tariff
 from atsuite.provider_model.observation import (
     BACKENDS,
     MEASUREMENTS,
+    execution_context,
     features,
+    trace_measurements,
     validate_observation,
     validate_pool,
-    trace_measurements,
-    execution_context,
 )
-from atsuite.workload.descriptor import distance
 from atsuite.tracing.storage import read_text, write_json
+from atsuite.workload.descriptor import compatibility_key, compatible
 from atsuite.workload.model import distribution
 from atsuite.workload.profile import number
 
@@ -128,38 +128,6 @@ def target_confidence(coverage, unique_count, *, required, minimum, marginal=Fal
         "unique_samples": unique_count,
         "minimum_samples": minimum,
     }
-
-
-def _target_profiles(profiles: list[dict], pool: dict, rows: list[dict], neighbors: int) -> list[dict]:
-    """Use target-native resource peers when a foreign profile has no shared baseline."""
-    context = execution_context(pool)
-    result, substituted = [], set()
-    for profile in profiles:
-        if profile.get("reference_id") or profile.get("execution_pool") == context or not profile.get("descriptor"):
-            result.append(profile)
-            continue
-        peers = sorted(
-            (
-                (
-                    distance(profile["descriptor"], r["profile"]["descriptor"]),
-                    -r["available_ns"],
-                    r,
-                )
-                for r in rows
-                if r["profile"].get("execution_pool") == context
-                and not r["profile"].get("reference_id")
-                and r["profile"].get("descriptor")
-            ),
-            key=lambda item: item[:2],
-        )
-        peers = [r for d, _, r in peers if d <= 0.5][:neighbors]
-        if not peers:
-            result.append(profile)
-        for row in peers:
-            if row["id"] not in substituted:
-                result.append(row["profile"])
-                substituted.add(row["id"])
-    return result
 
 
 class ProviderModel:
@@ -315,6 +283,8 @@ class ProviderModel:
             ]
         else:
             profiles = [workload]
+        if len({compatibility_key(p.get("descriptor")) for p in profiles}) > 1:
+            raise ValueError("Joint predictions must share one tool/Harness identity")
         with self.lock:
             visible = []
             for history in self.samples.values():
@@ -325,17 +295,14 @@ class ProviderModel:
         for pool in pools:
             validate_pool(pool)
             candidates = [r for r in visible if _compatible(r["pool"], pool) and not r.get("capacity_transition")]
-            descriptors = [p["descriptor"] for p in profiles if (p.get("descriptor") or {}).get("semantic")]
-            if descriptors:
-                candidates = [
-                    r
-                    for r in candidates
-                    if r["profile"].get("descriptor")
-                    and any(distance(d, r["profile"]["descriptor"]) <= 0.5 for d in descriptors)
-                ]
+            descriptors = [p.get("descriptor") for p in profiles if p.get("descriptor") is not None]
+            candidates = [
+                r for r in candidates
+                if any(compatible(d, r["profile"].get("descriptor")) for d in descriptors)
+            ]
             requests = [r for r in candidates if r["kind"] == "request"]
             successes = [r for r in requests if r["status"] == "success"]
-            cost_profiles = _target_profiles(profiles, pool, successes, self.neighbors)
+            cost_profiles = profiles
             queries = [features(p, pool, load_rps) for p in cost_profiles]
             # Identical resource queries keep their mixture weight without repeating neighbor searches.
             query_keys = [json.dumps(q, sort_keys=True) for q in queries]
@@ -463,9 +430,10 @@ class ProviderModel:
                 marginal=marginal,
             )
             cost_confidence["missing_cost_evidence"] = analytical["missing"] if analytical else []
-            if analytical and (not analytical["complete"] or not analytical["calibrated"]):
-                cost_confidence["reasons"].append("cost_evidence_insufficient")
-            elif not analytical and not any(c["complete"] and c["total"]["n"] >= minimum for c in costs):
+            if (
+                analytical and (not analytical["complete"] or not analytical["calibrated"])
+                or not analytical and not any(c["complete"] and c["total"]["n"] >= minimum for c in costs)
+            ):
                 cost_confidence["reasons"].append("cost_evidence_insufficient")
             cost_confidence["reliable"] = not cost_confidence["reasons"]
             latency_evidence = len({r["id"] for r in selected if number(r["measurements"].get("latency_s"))})

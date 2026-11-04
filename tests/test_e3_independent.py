@@ -10,7 +10,7 @@ from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
-from atsuite.workload import describe
+from tests.workload_fixtures import describe
 from experiments.e3.independent import (
     ADDITIONS,
     allocate,
@@ -241,6 +241,7 @@ class IndependentRequestsTests(unittest.TestCase):
             "workload_model": "/must/not/load.json",
             "provider_model": "/must/not/load-either.json",
             "routing": {
+                "enable_context_routing": True,
                 "default_pool": "ali_fc",
                 "latency_weight": 0,
                 "execution_bounds": {

@@ -26,6 +26,7 @@ class TwoArmTests(unittest.TestCase):
             old.pools,
             {"known": 1, "promising": 0, "expensive": 0},
             default_pool="known",
+            enable_context_routing=True,
             execution_bounds=bounds,
             exploration={"epsilon": 0, "seed": 9},
         )

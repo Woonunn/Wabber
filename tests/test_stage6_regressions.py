@@ -8,7 +8,8 @@ from pathlib import Path
 from atsuite.provider_model import ProviderModel
 from atsuite.provider_model.analytical import calibration, predict_cost, price_profile
 from atsuite.provider_model.observation import execution_context
-from atsuite.workload import WorkloadModel, describe, extract_profile
+from atsuite.workload import WorkloadModel, extract_profile
+from tests.workload_fixtures import describe, stable_prediction
 from tests.stage6_fixtures import tariff
 from tests.test_provider_model import observation, pool, profile
 from tests.test_workload import trace
@@ -64,8 +65,9 @@ class Stage6RegressionTests(unittest.TestCase):
                 model.update(row)
         query = native_profile(configs[0], 10)
         result = model.predict(query, configs, 0.5, as_of_ns=1000)["pools"]
-        self.assertEqual([r["latency"]["mean"] for r in result], [12, 3])
-        self.assertTrue(all(not r["low_confidence"] for r in result))
+        self.assertEqual([r["latency"]["mean"] for r in result], [12, 2])
+        self.assertEqual([r["low_confidence"] for r in result], [False, True])
+        self.assertFalse(result[1]["analytical_cost"]["calibrated"])
         future = observation(3)
         future.update(
             pool=configs[1], profile=native_profile(configs[1], 0.1), available_ns=2000
@@ -129,7 +131,7 @@ class Stage6RegressionTests(unittest.TestCase):
             path = Path(folder) / "workload.json"
             model.save(path)
             self.assertEqual(
-                WorkloadModel.load(path).predict(140, descriptor=descriptor), latest
+                stable_prediction(WorkloadModel.load(path).predict(140, descriptor=descriptor)), stable_prediction(latest)
             )
 
     def test_three_successes_do_not_hide_missing_calibration_or_extrapolation(self):

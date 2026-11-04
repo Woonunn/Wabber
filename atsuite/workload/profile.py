@@ -1,5 +1,6 @@
 """Logical resource demand and source-scoped usage from canonical causal traces."""
 
+import copy
 import math
 from collections import Counter
 
@@ -231,6 +232,8 @@ def extract_profile(trace: dict) -> dict:
     for key in missing:
         if key.startswith("state_"):
             missing[key] = "logical state accesses missing or incomplete trace"
+    if metrics["state_transfer_bytes"] is None:
+        missing["state_transfer_bytes"] = "physical transport counters missing or incomplete trace"
     if metrics["rho_kb_s"] is None:
         missing["rho_kb_s"] = (
             "requires complete logical state accesses and positive measured LLM idle time"
@@ -249,6 +252,21 @@ def extract_profile(trace: dict) -> dict:
                                    for s, value in zip(tools, cpu) if number(value))),
             "missing_calls": [s["id"] for s, value in zip(tools, cpu) if not number(value)],
             "basis": "One non-overlapping counter per call; subtotal is not provider billable CPU",
+        },
+        "descriptor": copy.deepcopy(trace.get("request_context")),
+        "observations": {
+            "tool_invocations": [
+                {k: copy.deepcopy(s.get(k)) for k in
+                 ("id", "name", "input", "dependencies", "start_ns", "end_ns", "duration_s", "status", "resources", "metadata")}
+                for s in tools
+            ],
+            "llm_calls": [
+                {k: copy.deepcopy(s.get(k)) for k in
+                 ("id", "name", "dependencies", "start_ns", "end_ns", "duration_s", "status", "metadata")}
+                for s in llms
+            ],
+            "state_accesses": copy.deepcopy(accesses) if state_complete else None,
+            "state_transfers": copy.deepcopy(transports),
         },
         "metrics": metrics,
         "missing": missing,

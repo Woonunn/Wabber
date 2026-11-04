@@ -17,7 +17,7 @@ import gzip
 from atsuite.provider_model.model import ProviderModel
 from atsuite.routing.router import OnlineRouter
 from atsuite.tracing.storage import read_text
-from atsuite.workload.descriptor import describe
+from atsuite.workload.descriptor import describe, family_key
 from atsuite.workload.model import WorkloadModel, distribution
 from experiments.exp1.runner.mix import write
 
@@ -57,7 +57,7 @@ def replay(router: OnlineRouter, arrivals: list[dict], outcome) -> list[dict]:
         row = {"request_id": rid, "arrival_id": arrival["arrival_id"],
                "at_ns": now, "segment": arrival["segment"],
                "first_prompt": arrival["first_prompt"], "first_family": arrival["first_family"],
-               "family": arrival["descriptor"]["semantic"]["primary"],
+               "family": family_key(arrival["descriptor"]),
                "selected": selected, "reason": decision["reason"],
                "explored": decision["exploration"]["explored"],
                "exploration_reason": decision["exploration"].get("reason"),

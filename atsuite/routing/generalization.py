@@ -15,6 +15,7 @@ from atsuite.routing import OnlineRouter
 from atsuite.workload import WorkloadModel, describe
 from atsuite.workload.model import distribution
 from atsuite.workload.profile import number
+from atsuite.workload.retrieval import ContextBackend, ContextRetriever
 
 TOOLS = ["prepare_workspace", "execute_analysis", "merge_artifacts", "validate_result"]
 
@@ -26,7 +27,8 @@ def evaluate(
     *,
     held_task=None,
     held_family=None,
-    descriptor_mode="semantic",
+    descriptor_mode="context",
+    retrieval_config=None,
     history_limit=20,
     adaptive=False,
     latency_weight=0.001,
@@ -43,7 +45,7 @@ def evaluate(
     """
     if not isinstance(prediction_stride, int) or prediction_stride < 1:
         raise ValueError("Prediction stride must be positive")
-    if descriptor_mode not in {"semantic", "legacy"} or (
+    if descriptor_mode not in {"context", "embedding"} or (
         held_family is not None and (held_task is not None or adaptive)
     ):
         raise ValueError(
@@ -66,11 +68,9 @@ def evaluate(
         or any(not isinstance(v, str) or not v for v in family_labels.values())
     ):
         raise ValueError("Invalid independent family labels")
-    labels = (
-        family_labels
-        if family_labels is not None
-        else {t: d.get("semantic", {}).get("primary") for t, d in descriptors.items()}
-    )
+    if held_family is not None and family_labels is None:
+        raise ValueError("Family holdout requires independent evaluation labels")
+    labels = family_labels or {}
     held_tasks = (
         {t for t, label in labels.items() if label == held_family}
         if held_family
@@ -79,10 +79,10 @@ def evaluate(
     if held_family and not held_tasks:
         raise ValueError("No prompts in held-out computational family")
     descriptors = copy.deepcopy(descriptors)
-    if descriptor_mode == "legacy":
-        for d in descriptors.values():
-            d.pop("semantic", None)
-    provider, workload = ProviderModel(tariffs=tariffs), WorkloadModel()
+    def new_workload():
+        return WorkloadModel(retriever=ContextRetriever(ContextBackend(retrieval_config) if retrieval_config else None,
+                                                       rerank=descriptor_mode == "context"))
+    provider, workload = ProviderModel(tariffs=tariffs), new_workload()
     pools = {r["pool"]["provider"]: r["pool"] for r in rows if r["kind"] == "request"}
     first, latest = {}, {}
     for row in sorted(rows, key=lambda r: r["available_ns"]):
@@ -153,7 +153,7 @@ def evaluate(
                 retained[identity] = copy.deepcopy(row)
                 training_ids = set(retained)
                 # Rebuild the small bounded sample so evicted revisions and duplicate references cannot linger.
-                provider, workload = ProviderModel(tariffs=tariffs), WorkloadModel()
+                provider, workload = ProviderModel(tariffs=tariffs), new_workload()
                 fixed_profiles = set()
                 for rid, sample in sorted(retained.items()):
                     sample = copy.deepcopy(sample)
@@ -217,18 +217,12 @@ def evaluate(
             and task not in held_tasks
         ) or index % prediction_stride:
             continue
-        prediction = workload.predict(stamp, descriptor=descriptors.get(task))
-        # Predict the actual historical pool separately; deployments may differ across E1-A windows.
-        pred = provider.predict(
-            prediction, [row["pool"]], row["load_rps"], as_of_ns=stamp
-        )["pools"][0]
         decision = router.decide(
-            "shadow:" + row["id"],
-            load_rps=row["load_rps"],
-            as_of_ns=stamp,
-            shadow=True,
-            descriptor=descriptors.get(task),
+            "shadow:" + row["id"], load_rps=row["load_rps"], as_of_ns=stamp,
+            shadow=True, descriptor=descriptors.get(task),
         )
+        prediction = decision["workload"]
+        pred = provider.predict(prediction, [row["pool"]], row["load_rps"], as_of_ns=stamp)["pools"][0]
         estimate = pred.get("analytical_cost")
         # The reference is measured held-out demand repriced at a frozen tariff, never an invoice.
         reference = (
@@ -322,7 +316,7 @@ def evaluate(
         "sampling_seed": sampling_seed if history_sampling == "reservoir" else None,
         "family_label_basis": "independent"
         if family_labels is not None
-        else "descriptor_derived_diagnostic",
+        else "none",
         "prediction_stride": prediction_stride,
         "adaptive": adaptive,
         "latency_weight": latency_weight,

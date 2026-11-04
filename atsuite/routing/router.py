@@ -1,11 +1,11 @@
 """Causal cost/latency routing with bounded fallback and whole-session admission."""
 
 import copy
-from collections import Counter
 import json
 import math
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 
 from atsuite.provider_model.observation import (
@@ -13,10 +13,10 @@ from atsuite.provider_model.observation import (
     trace_measurements,
     validate_pool,
 )
-from atsuite.workload.profile import number
-from atsuite.workload.descriptor import validate_descriptor
-from atsuite.routing.objective import pareto, validate_weights
 from atsuite.routing.exploration import Exploration, model_revision
+from atsuite.routing.objective import pareto, validate_weights
+from atsuite.workload.descriptor import context_key, validate_descriptor
+from atsuite.workload.profile import number
 
 
 def risk_estimate(rows: list[dict], slo_s: float) -> dict:
@@ -60,7 +60,12 @@ class OnlineRouter:
         fx: dict | None = None,
         log_path: Path | None = None,
         exploration: dict | None = None,
+        enable_context_routing: bool = False,
     ):
+        if type(enable_context_routing) is not bool:
+            raise ValueError("Invalid context routing rollout flag")
+        self.enable_context_routing = enable_context_routing
+        self.prediction_costs = Counter()
         validate_weights(cost_weight, latency_weight)
         bounds = copy.deepcopy(execution_bounds or {})
         if default_pool is not None and (default_pool not in pools or default_pool not in bounds):
@@ -204,7 +209,12 @@ class OnlineRouter:
             raise ValueError("Unknown exploration pool")
         with self.lock:
             if request_id in self.decisions:
+                if context_key(descriptor) != context_key(self.decisions[request_id]["descriptor"]):
+                    raise ValueError("Request ID reused with a different context")
                 return copy.deepcopy(self.decisions[request_id])
+            with self.workload.lock:
+                if request_id in self.workload.samples:
+                    raise ValueError("Request ID already exists in workload history")
             with self.provider.lock:
                 if any(key[3] == request_id for key in self.provider.samples):
                     raise ValueError("Request ID already exists in provider history")
@@ -219,7 +229,20 @@ class OnlineRouter:
                         "model_revision": revision,
                     }
                 )
+            prediction_start = time.perf_counter()
             workload = self.workload.predict(now, descriptor=descriptor)
+            overhead = workload["retrieval"]
+            self.prediction_costs[overhead["currency"] or "local"] += overhead["cost"]
+            inference_budget_charge = overhead["cost"]
+            if inference_budget_charge and self.fx:
+                conversion = self.fx["rates"].get(overhead["currency"])
+                inference_budget_charge = inference_budget_charge * conversion if conversion is not None else None
+            elif inference_budget_charge and self.budget is not None:
+                currencies = {b["currency"] for b in self.execution_bounds.values()}
+                if currencies != {overhead["currency"]}:
+                    inference_budget_charge = None
+            if not shadow and inference_budget_charge is not None:
+                self.spent += inference_budget_charge
             profiles = workload["joint_profiles"]
             predictions = [
                 self.provider.predict(profiles, [pool], rates[key], as_of_ns=now)["pools"][0]
@@ -238,6 +261,8 @@ class OnlineRouter:
                     + self.external_occupancy.get(key, 0)
                 )
                 flags = []
+                if self.budget is not None and (inference_budget_charge is None or not overhead.get("cost_complete", True)):
+                    flags.append("prediction_cost_unknown")
                 if allowed_pools is not None and key not in allowed_pools and key not in (exploration_pools or set()):
                     flags.append("excluded_by_control_policy")
                 if limit is None:
@@ -261,11 +286,9 @@ class OnlineRouter:
                     cap *= self.fx["rates"][bound["currency"]]
                 if self.budget is not None and self.spent + reserved + cap > self.budget:
                     flags.append("budget_exhausted")
-                if bound and (now - arrival) / 1e9 >= bound["timeout_s"]:
+                if bound and (now - arrival) / 1e9 + time.perf_counter() - prediction_start >= bound["timeout_s"]:
                     flags.append("execution_deadline_elapsed")
                 cost = pred.get("analytical_cost")
-                if cost is None:
-                    cost = next((c for c in pred.get("cost", []) if c.get("complete") and c.get("total")), None)
                 if cost and not cost["complete"]:
                     cost = None
                 amount = cost["total"]["mean"] if cost else None
@@ -274,10 +297,19 @@ class OnlineRouter:
                     conversion = self.fx["rates"].get(currency)
                     amount = amount * conversion if conversion is not None else None
                     currency = self.fx["currency"] if conversion is not None else currency
+                inference_cost = overhead["cost"]
+                inference_currency = overhead["currency"]
+                if amount is not None and inference_cost:
+                    if self.fx:
+                        conversion = self.fx["rates"].get(inference_currency)
+                        inference_cost = inference_cost * conversion if conversion is not None else None
+                    elif currency != inference_currency:
+                        inference_cost = None
+                    amount = amount + inference_cost if inference_cost is not None else None
                 latency = pred["latency"]["mean"]
                 # Occupancy is a snapshot, not a fabricated queue measurement.
                 if latency is not None:
-                    latency += (now - arrival) / 1e9
+                    latency += (now - arrival) / 1e9 + time.perf_counter() - prediction_start
                 candidates.append(
                     {
                         "key": key,
@@ -316,9 +348,13 @@ class OnlineRouter:
                 if c["objective_cost"] is not None and (self.latency_weight == 0 or c["objective_latency"] is not None)
             ]
             comparable = bool(priced) and len({c["currency"] for c in priced}) == 1
-            # Confidence describes evidence; it does not remove feasible cheaper forecasts.
-            ranked = priced if comparable else []
-            frontier = pareto(priced) if comparable else []
+            # Uncalibrated demand or platform forecasts use the bounded default.
+            ranked = [
+                c for c in priced
+                if c["prediction_diagnostics"]["cost"]["reliable"]
+                and (self.latency_weight == 0 or c["prediction_diagnostics"]["latency"]["reliable"])
+            ] if comparable and not workload["low_confidence"] and (shadow or self.enable_context_routing) else []
+            frontier = pareto(ranked)
             selected = (
                 min(
                     ranked,
@@ -336,7 +372,7 @@ class OnlineRouter:
                 "probabilities": {c["key"]: float(c is selected) for c in candidates},
                 "selection_probability": 1.0 if selected else 0.0,
             }
-            if self.exploration:
+            if self.exploration and (shadow or self.enable_context_routing):
                 exploration_reserved = sum(
                     d["reserved_cost"]
                     for rid, d in self.active.items()
@@ -374,6 +410,7 @@ class OnlineRouter:
                 "pool_load_rps": rates,
                 "load_basis": "per_pool_snapshot" if pool_load_rps is not None else "offered_load_per_candidate",
                 "shadow": shadow,
+                "context_routing_enabled": self.enable_context_routing,
                 "selected": selected["key"] if selected else None,
                 "pool_snapshot": copy.deepcopy(self.pools),
                 "mode": selected["prediction"]["mode"] if selected else None,
@@ -399,6 +436,8 @@ class OnlineRouter:
                 "provider_workload_profiles": len(profiles),
                 "candidates": candidates,
             }
+            result["prediction_overhead"] = {**overhead, "total_latency_s": time.perf_counter() - prediction_start}
+            self.workload.record_prediction(request_id, workload)
             self._log({"event": "decision", **result})
             self.decisions[request_id] = copy.deepcopy(result)
             if selected and not shadow:
@@ -459,8 +498,8 @@ class OnlineRouter:
                 "cost": None,
                 "measurements": trace_measurements(trace),
             }
-            self.provider.update(row)
             self.workload.update(profile, now, descriptor=decision["descriptor"])
+            self.provider.update(row)
             capped = "max_cost" in (decision.get("execution_bounds") or {})
             charge = actual_cost if actual_cost is not None else decision["reserved_cost"] if capped else None
             accounting = {
@@ -517,6 +556,7 @@ class OnlineRouter:
                 },
                 "capacity_reserved": dict(self.capacity_reserved),
                 "budget_spent_or_capped": self.spent,
+                "prediction_cost_by_currency": dict(self.prediction_costs),
                 "total_infrastructure_actual_cost": None,
                 "realized_counterfactual_gain": None,
                 "scope": "Decision/feedback evidence; capacity caps are not bills; benefit requires matched policy runs",

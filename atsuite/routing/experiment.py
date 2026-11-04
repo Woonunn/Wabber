@@ -10,7 +10,6 @@ from atsuite.provider_model import ProviderModel
 from atsuite.provider_model.e1a import load_e1a
 from atsuite.provider_model.e1b import load_e1b
 from atsuite.routing import JointController, OnlineRouter, candidate_plans
-from atsuite.workload.model import distribution
 from atsuite.routing.simulation import (
     ServiceSurface,
     SimulatedAdapter,
@@ -19,7 +18,7 @@ from atsuite.routing.simulation import (
 )
 from atsuite.tracing.storage import read_text
 from atsuite.workload import WorkloadModel
-
+from atsuite.workload.model import distribution
 
 STRATEGIES = (
     "fixed_aws_lambda",
@@ -139,7 +138,7 @@ def build_controller(config: dict, adapters: dict, *, policy="joint", log_path=N
         raise ValueError("Duplicate capacity target")
     pools = {k: levels[k][v["initial"]]["pool"] for k, v in config["pools"].items()}
     router = OnlineRouter(
-        WorkloadModel.load(Path(config["workload_model"])),
+        WorkloadModel.load(Path(config["workload_model"]), retrieval_config=config.get("retrieval")),
         ProviderModel.load(Path(config["provider_model"])),
         pools,
         {},

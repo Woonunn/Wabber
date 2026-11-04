@@ -1,3 +1,5 @@
+> 历史实验归档：其中的意图标签/资源先验算法已移除。当前实现与复现入口见 [Context prediction](../../atsuite/workload/README.md)。这些旧结果仅用于离线基线比较。
+
 # Stage 6 验证记录（2026-11-01 修订）
 
 实现已接入现有 Router、Workload Model、Provider Model、JointController 和 LangGraph runner。

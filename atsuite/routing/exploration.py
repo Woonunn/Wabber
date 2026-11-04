@@ -6,7 +6,7 @@ import math
 import random
 
 from atsuite.provider_model.model import _compatible
-from atsuite.workload.descriptor import distance, family_key
+from atsuite.workload.descriptor import compatible, context_key, family_key
 from atsuite.workload.profile import number
 
 
@@ -68,7 +68,8 @@ class Exploration:
                     and not row.get("capacity_transition")
                     and descriptor is not None
                     and d is not None
-                    and distance(descriptor, d) <= 0.5
+                    and compatible(descriptor, d)
+                    and context_key(descriptor) == context_key(d)
                 ):
                     rows.append(row)
         return {

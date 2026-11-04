@@ -15,11 +15,13 @@ from atsuite.provider_model.e1a import _estimate
 from atsuite.provider_model.experiment import evaluate
 from atsuite.workload import WorkloadModel, extract_profile
 from tests.test_workload import trace
+from tests.workload_fixtures import describe
 
 
 def profile(state=8000, idle=2):
     result = extract_profile(trace())
     result["reference_id"] = "test-reference"
+    result["descriptor"] = describe()
     result["metrics"].update(
         state_bytes=state,
         llm_idle_s=idle,
@@ -251,13 +253,13 @@ class ProviderModelTests(unittest.TestCase):
     def test_workload_model_joint_profiles_are_copies(self):
         workload = WorkloadModel()
         workload.observe(trace(), 20)
-        predicted = workload.predict(21)
+        predicted = workload.predict(21, descriptor=describe())
         self.assertEqual(len(predicted["joint_profiles"]), 1)
         predicted["joint_profiles"][0]["metrics"]["state_bytes"] = 0
         self.assertEqual(
-            workload.predict(21)["joint_profiles"][0]["metrics"]["state_bytes"], 8000
+            workload.predict(21, descriptor=describe())["joint_profiles"][0]["metrics"]["state_bytes"], 8000
         )
-        result = ProviderModel().predict(workload.predict(21), [pool()], 0.5)
+        result = ProviderModel().predict(workload.predict(21, descriptor=describe()), [pool()], 0.5)
         self.assertEqual(result["workload_basis"], "joint_profiles")
         self.assertEqual(result["workload_samples"], 1)
 

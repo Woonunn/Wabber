@@ -405,21 +405,18 @@ def main():
         reports = []
         present = {r.get("task_id") for r in rows}
         labels = config.get("family_labels")
-        families = (
-            {v for t, v in labels.items() if t in present}
-            if labels is not None
-            else {
-                d["semantic"]["primary"] for t, d in descriptors.items() if t in present
-            }
-        ) - {"unknown"}
+        if labels is None:
+            raise ValueError("Holdout requires independent family_labels; task classes are not prediction features")
+        families = {v for t, v in labels.items() if t in present}
         for family in sorted(families):
-            for mode in ("legacy", "semantic"):
+            for mode in ("context", "embedding"):
                 report = evaluate(
                     rows,
                     descriptors,
                     config["tariffs"],
                     held_family=family,
                     descriptor_mode=mode,
+                    retrieval_config=config.get("retrieval"),
                     history_limit=config.get("history_limit", 1000),
                     fx=config.get("fx"),
                     family_labels=labels,

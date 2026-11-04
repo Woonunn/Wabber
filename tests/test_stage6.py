@@ -14,7 +14,8 @@ from atsuite.provider_model.analytical import (
 )
 from atsuite.routing import OnlineRouter
 from atsuite.routing.objective import pareto
-from atsuite.workload import WorkloadModel, describe
+from atsuite.workload import WorkloadModel
+from tests.workload_fixtures import describe, stable_prediction, calibrate
 from tests.stage6_fixtures import bounds, tariff
 from tests.test_provider_model import observation, pool, profile
 from tests.test_workload import trace
@@ -94,22 +95,22 @@ class Stage6Tests(unittest.TestCase):
         )
         model = WorkloadModel(initial_profiles=[profile()])
         self.assertEqual(
-            model.predict(1, descriptor=small)["match_basis"], "initial_prior"
+            model.predict(1, descriptor=small)["match_basis"], "cold_start"
         )
         for i, descriptor in enumerate((small, large)):
             p = profile(state=1000 if i == 0 else 10**9)
             p["request_id"] = str(i)
             model.update(p, 100 + i, descriptor=descriptor)
         predicted = model.predict(102, descriptor=small)
-        self.assertEqual(predicted["match_basis"], "resource_family")
+        self.assertEqual(predicted["match_basis"], "exact_context")
         self.assertEqual(predicted["metrics"]["state_bytes"]["mean"], 1000)
         future = profile(state=10**12)
         future["request_id"] = "future"
         model.update(future, 200, descriptor=small)
-        self.assertEqual(predicted, model.predict(102, descriptor=small))
+        self.assertEqual(stable_prediction(predicted), stable_prediction(model.predict(102, descriptor=small)))
         self.assertEqual(
             model.predict(102, descriptor=describe(tools=["other"]))["match_basis"],
-            "initial_prior",
+            "cold_start",
         )
         with self.assertRaises(ValueError):
             model.predict(102, descriptor={**small, "task_id": "leak"})
@@ -117,7 +118,7 @@ class Stage6Tests(unittest.TestCase):
             path = Path(folder) / "workload.json.gz"
             model.save(path)
             self.assertEqual(
-                predicted, WorkloadModel.load(path).predict(102, descriptor=small)
+                stable_prediction(predicted), stable_prediction(WorkloadModel.load(path).predict(102, descriptor=small))
             )
 
     def test_unseen_prompt_without_task_id_reserves_budget_and_capacity(self):
@@ -146,7 +147,7 @@ class Stage6Tests(unittest.TestCase):
             router.decisions["over-budget"]["candidates"][0]["flags"],
         )
         self.assertEqual(
-            router.workload.predict(201)["joint_profiles"][0]["descriptor"],
+            router.workload.predict(201, descriptor=decision["descriptor"])["joint_profiles"][0]["descriptor"],
             decision["descriptor"],
         )
 
@@ -294,6 +295,7 @@ class Stage6Tests(unittest.TestCase):
                 p = copy.deepcopy(row["profile"])
                 p["request_id"] = key + str(i)
                 workload.update(p, 1000)
+        calibrate(workload, describe())
         results = []
         for weight in (0, 1):
             router = OnlineRouter(
@@ -302,8 +304,9 @@ class Stage6Tests(unittest.TestCase):
                 configs,
                 {"cheap": 3, "fast": 3},
                 latency_weight=weight,
+                execution_bounds={k: bounds() for k in configs},
             )
-            result = router.decide("query", load_rps=0.5, as_of_ns=2000, shadow=True)
+            result = router.decide("query", load_rps=0.5, as_of_ns=2000, shadow=True, descriptor=describe())
             self.assertEqual(set(result["pareto"]), {"cheap", "fast"})
             results.append(result["selected"])
         self.assertEqual(results, ["cheap", "fast"])

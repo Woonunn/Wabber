@@ -8,6 +8,7 @@ from pathlib import Path
 from atsuite.tracing import TraceCollector
 from atsuite.workload import WorkloadModel, extract_profile
 from atsuite.workload.experiment import evaluate, load_capture
+from tests.workload_fixtures import describe, stable_prediction
 
 
 def trace(request="r", arrival=1, end=10, mode="resident"):
@@ -44,7 +45,9 @@ def trace(request="r", arrival=1, end=10, mode="resident"):
     )
     collector.spans["tool"]["resources"] = {"cpu_seconds": 0.5, "cpu_scope": "tool_invocation",
                                              "cpu_complete": True}
+    collector.spans["tool"]["metadata"].pop("harness_resource_usage", None)
     result = collector.snapshot()
+    result["request_context"] = describe()
     result.update(arrival_ns=arrival, completed_ns=end)
     return result
 
@@ -75,20 +78,20 @@ class WorkloadTests(unittest.TestCase):
         t["request_status"] = "failed"
         model = WorkloadModel()
         self.assertEqual(model.observe(t, 11)["status"], "failed")
-        self.assertEqual(model.predict(12)["sample_count"], 0)
+        self.assertEqual(model.predict(12, descriptor=describe())["sample_count"], 0)
         t["spans"][0]["end_ns"] = None
         self.assertEqual(extract_profile(t)["status"], "incomplete")
 
     def test_strict_arrival_cutoff_and_delayed_ingestion(self):
         model = WorkloadModel()
         model.observe(trace(), 20)
-        self.assertEqual(model.predict(20)["sample_count"], 0)
-        self.assertEqual(model.predict(21)["sample_count"], 1)
-        prediction = model.begin("next", "s", 15)
+        self.assertEqual(model.predict(20, descriptor=describe())["sample_count"], 0)
+        self.assertEqual(model.predict(21, descriptor=describe())["sample_count"], 1)
+        prediction = model.begin("next", "s", 15, descriptor=describe())
         model.observe(trace("future", 16, 30), 30)
         self.assertEqual(prediction["sample_count"], 0)
-        self.assertEqual(model.predict(25)["sample_count"], 1)
-        self.assertEqual(model.begin("concurrent", "s", 25)["concurrent_sessions"], 1)
+        self.assertEqual(model.predict(25, descriptor=describe())["sample_count"], 1)
+        self.assertEqual(model.begin("concurrent", "s", 25, descriptor=describe())["concurrent_sessions"], 1)
         with self.assertRaises(ValueError):
             model.observe(trace("early", 1, 30), 29)
 
@@ -100,13 +103,13 @@ class WorkloadTests(unittest.TestCase):
         model.observe(partial, 10)
         model.observe(t, 11)
         model.observe(t, 12)
-        pred = model.predict(13)
+        pred = model.predict(13, descriptor=describe())
         self.assertEqual(pred["metrics"]["rho_kb_s"]["samples"], [4])
         self.assertEqual(pred["workflow"]["branches"]["plan"][1]["probability"], 0.5)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "model.json"
             model.save(path)
-            self.assertEqual(WorkloadModel.load(path).predict(13), pred)
+            self.assertEqual(stable_prediction(WorkloadModel.load(path).predict(13, descriptor=describe())), stable_prediction(pred))
         t["spans"][-1]["metadata"]["state_accesses"][0]["bytes"] += 1
         with self.assertRaises(ValueError):
             model.observe(t, 14)
@@ -137,12 +140,12 @@ class WorkloadTests(unittest.TestCase):
 
     def test_registration_dedup_and_invalid_inputs(self):
         model = WorkloadModel()
-        model.begin("r", "r", 1)
+        model.begin("r", "r", 1, descriptor=describe())
         t = trace()
         del t["arrival_ns"]
         model.observe(t, 11)
         model.observe(t, 12)
-        self.assertEqual(model.predict(13)["sample_count"], 1)
+        self.assertEqual(model.predict(13, descriptor=describe())["sample_count"], 1)
         with self.assertRaises(ValueError):
             model.begin("bad", "bad", float("nan"))
         with self.assertRaises(ValueError):

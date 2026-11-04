@@ -39,7 +39,7 @@ def build_router(config: dict, strategy: str, log_path: Path) -> OnlineRouter:
         if pool.get("billing"):
             pool["billing"].pop("calibration", None)
     router = OnlineRouter(
-        WorkloadModel(),
+        WorkloadModel(retrieval_config=config.get("retrieval")),
         ProviderModel(minimum_samples=3),
         pools,
         config["limits"],

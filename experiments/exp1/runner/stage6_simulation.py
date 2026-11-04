@@ -44,7 +44,6 @@ def build(latency_weight, policy):
             }[task],
             files=[{"name": "input.csv", "bytes": max(1, state)}],
             tools=["python"],
-            category=task,
         )
         descriptors[task] = descriptor
         trace = {

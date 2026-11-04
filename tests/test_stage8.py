@@ -153,13 +153,14 @@ class ColdStartTests(unittest.TestCase):
     def router(self, *, default=True, budget=10, epsilon=1):
         from atsuite.provider_model import ProviderModel
         from atsuite.routing import OnlineRouter
-        from atsuite.workload import WorkloadModel, describe
+        from atsuite.workload import WorkloadModel
+        from tests.workload_fixtures import describe
         from tests.stage6_fixtures import bounds
         from tests.test_provider_model import pool
 
         pools = {name: {**pool(), "environment": name} for name in ["default", "new"]}
         router = OnlineRouter(WorkloadModel(), ProviderModel(), pools, dict.fromkeys(pools, 2),
-                              default_pool="default" if default else None,
+                              default_pool="default" if default else None, enable_context_routing=True,
                               execution_bounds={name: bounds() for name in pools}, budget=budget,
                               exploration={"epsilon": epsilon, "budget": budget, "seed": 8})
         return router, describe(prompt="Calculate mean and variance", tools=["python"])

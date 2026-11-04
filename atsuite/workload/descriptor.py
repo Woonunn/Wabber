@@ -1,22 +1,13 @@
-"""Arrival-time computational intent and resource descriptors; no observed DAGs."""
+"""Versioned arrival context and strict workload implementation identities."""
 
+import copy
 import hashlib
 import json
 import math
-import re
 from pathlib import PurePath
 
 from atsuite.workload.profile import number
 
-# shortcut: fixed lexical cues are incomplete; keep unknown intents uncertain until independently validated semantics are available.
-INTENTS = {
-    "training": r"\b(train(?:ing)?|fit|predictive|classifier|classification|regression|lstm|neural|random forest|svm|xgboost|clustering|k-means)\b|训练|拟合|分类|回归|聚类",
-    "iterative": r"\b(iterat\w*|bootstrap\w*|monte carlo|simulat\w*|optimi[sz]\w*|convergen\w*|epochs?|cross.validat\w*|grid search)\b|迭代|自助采样|蒙特卡洛|优化|交叉验证",
-    "statistics": r"\b(statisti\w*|analysis|analy[sz]e|mean|median|variance|correlation|hypothesis|t.test|anova|gini|inequality|percentile|summari[sz]e|summary)\b|统计|均值|方差|相关|检验",
-    "visualization": r"\b(plot\w*|chart\w*|visuali[sz]\w*|histogram|scatter|heatmap|lorenz|figure)\b|绘图|可视化|图表",
-    "processing": r"\b(clean\w*|transform\w*|filter\w*|join|merge|aggregat\w*|preprocess\w*|sort\w*|deduplicat\w*|imput\w*)\b|清洗|转换|过滤|合并|排序|去重",
-    "stateful": r"\b(shared (?:state|array|data)|retain\w*|checkpoint\w*|intermediate|persist\w*|cache\w*|reuse\w*|in.memory)\b|共享状态|保留|中间结果|持久化|缓存|复用",
-}
 NUMERIC = {
     "prompt_chars",
     "prompt_lines",
@@ -26,36 +17,79 @@ NUMERIC = {
     "unknown_file_sizes",
 }
 LEGACY_FIELDS = NUMERIC | {"file_types", "tools", "category", "hints"}
+CONTEXT_FIELDS = (LEGACY_FIELDS - {"category"}) | {
+    "version",
+    "prompt",
+    "files",
+    "tool_definitions",
+    "harness",
+    "model",
+    "control",
+    "session",
+}
 
 
-def describe(*, prompt="", files=(), tools=(), category=None, hints=None) -> dict:
-    """Extract a versioned, deterministic multi-intent signature from supplied inputs."""
+def fingerprint(value: object) -> str:
+    """Hash canonical JSON, including implementation revisions and definitions."""
+    return hashlib.sha256(
+        json.dumps(
+            value,
+            sort_keys=True,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode()
+    ).hexdigest()
+
+
+def _identity(value: object) -> bool:
+    return (
+        isinstance(value, dict)
+        and set(value) == {"id", "revision"}
+        and all(isinstance(v, str) and v.strip() for v in value.values())
+    )
+
+
+def describe(
+    *,
+    prompt="",
+    files=(),
+    tools=(),
+    harness=None,
+    model=None,
+    control=None,
+    session=None,
+    hints=None,
+) -> dict:
+    """Freeze only information available before execution.
+
+    Tools need name, definition and implementation {id, revision}. Name-only tools
+    and absent Harness identities remain readable but cannot retrieve history.
+    File usage is deliberately unspecified unless supplied in arrival metadata.
+    """
     if not isinstance(prompt, str):
-        raise ValueError("Prompt must be text")
+        raise TypeError("Prompt must be text")
+    tools = list(tools)
+    files = copy.deepcopy(list(files))
+    definitions = sorted(
+        (copy.deepcopy(t) for t in tools if isinstance(t, dict)),
+        key=lambda t: t["name"],
+    )
+    names = [t["name"] if isinstance(t, dict) else t for t in tools]
     file_hints = {
         key: max(f[key] for f in files if number(f.get(key)))
         for key in ("rows", "columns", "features")
         if any(number(f.get(key)) for f in files)
     }
-    intents = [
-        name for name, pattern in INTENTS.items() if re.search(pattern, prompt, re.I)
-    ]
-    # Generic analysis words should not mask a more specific computational operation.
-    primary = next(
-        (
-            name
-            for name in (
-                "training",
-                "iterative",
-                "visualization",
-                "statistics",
-                "processing",
-            )
-            if name in intents
-        ),
-        "unknown",
-    )
     result = {
+        "version": 2,
+        "prompt": prompt,
+        "files": files,
+        "tool_definitions": definitions,
+        "harness": copy.deepcopy(harness),
+        "model": copy.deepcopy(model),
+        "control": copy.deepcopy(control),
+        "session": copy.deepcopy(session),
         "prompt_chars": len(prompt),
         "prompt_lines": len(prompt.splitlines()),
         "code_blocks": prompt.count("```"),
@@ -63,80 +97,134 @@ def describe(*, prompt="", files=(), tools=(), category=None, hints=None) -> dic
         "input_bytes": sum(f["bytes"] for f in files if number(f.get("bytes"))),
         "unknown_file_sizes": sum(not number(f.get("bytes")) for f in files),
         "file_types": sorted({PurePath(f["name"]).suffix.lower() for f in files}),
-        "tools": sorted(set(tools)),
-        "category": category,
+        "tools": sorted(names),
         "hints": {**file_hints, **dict(hints or {})},
-        "semantic": {"version": 1, "primary": primary, "intents": sorted(intents)},
     }
     validate_descriptor(result)
     return result
 
 
 def validate_descriptor(value: dict) -> None:
-    """Accept legacy snapshots; reject outcome features and malformed arrival hints."""
+    """Accept old snapshots for audit only; never treat labels as semantic samples."""
     if not isinstance(value, dict) or set(value) not in (
         LEGACY_FIELDS,
         LEGACY_FIELDS | {"semantic"},
+        CONTEXT_FIELDS,
     ):
         raise ValueError("Descriptor must contain only arrival-time features")
     if any(not number(value[k]) for k in NUMERIC):
         raise ValueError("Invalid descriptor feature")
-    if value["category"] is not None and not isinstance(value["category"], str):
+    if value.get("category") is not None and not isinstance(value["category"], str):
         raise ValueError("Invalid category")
     for field in ("tools", "file_types"):
         if not isinstance(value[field], list) or any(
-            not isinstance(v, str) for v in value[field]
+            not isinstance(v, str) or not v for v in value[field]
         ):
             raise ValueError("Invalid descriptor names")
+    if len(set(value["tools"])) != len(value["tools"]):
+        raise ValueError("Duplicate tools")
     if not isinstance(value["hints"], dict) or any(
         k not in {"cpu_s", "memory_mb", "state_bytes", "rows", "columns", "features"}
         or not number(v)
         for k, v in value["hints"].items()
     ):
         raise ValueError("Invalid resource hints")
-    if "semantic" in value:
-        s = value["semantic"]
-        if (
-            not isinstance(s, dict)
-            or set(s) != {"version", "primary", "intents"}
-            or type(s["version"]) is not int
-            or s["version"] != 1
-            or not isinstance(s["intents"], list)
-            or any(not isinstance(i, str) or i not in INTENTS for i in s["intents"])
-            or len(set(s["intents"])) != len(s["intents"])
-            or s["primary"] not in {*INTENTS, "unknown"}
-            or (s["primary"] != "unknown" and s["primary"] not in s["intents"])
-        ):
-            raise ValueError("Invalid computational intent")
-
-
-def legacy_distance(left: dict, right: dict) -> float:
-    """Stage 6 descriptor distance, retained for snapshot compatibility and ablation."""
-    parts = [
-        abs(math.log2(1 + left[k]) - math.log2(1 + right[k])) / 4
-        for k in ("prompt_chars", "file_count", "input_bytes")
-    ]
-    for key in ("file_types", "tools"):
-        a, b = set(left[key]), set(right[key])
-        parts.append(1 - len(a & b) / len(a | b) if a | b else 0)
-    for key in set(left["hints"]) | set(right["hints"]):
-        a, b = left["hints"].get(key), right["hints"].get(key)
-        parts.append(
-            abs(math.log2(1 + a) - math.log2(1 + b)) / 4
-            if a is not None and b is not None
-            else 1
+    if set(value) != CONTEXT_FIELDS:
+        return
+    if (
+        type(value["version"]) is not int
+        or value["version"] != 2
+        or not isinstance(value["prompt"], str)
+    ):
+        raise ValueError("Invalid request context version/prompt")
+    files = value["files"]
+    allowed_file = {
+        "name",
+        "bytes",
+        "sha256",
+        "rows",
+        "columns",
+        "features",
+        "schema",
+        "description",
+        "usage",
+        "path",
+    }
+    if not isinstance(files, list) or any(
+        not isinstance(f, dict)
+        or not set(f) <= allowed_file
+        or not isinstance(f.get("name"), str)
+        or any(
+            k in f and f[k] is not None and not number(f[k])
+            for k in ("bytes", "rows", "columns", "features")
         )
-    if left["category"] and right["category"]:
-        parts.append(float(left["category"] != right["category"]))
-    return sum(parts) / len(parts)
+        for f in files
+    ):
+        raise ValueError("Invalid arrival file metadata")
+    if value["harness"] is not None and not _identity(value["harness"]):
+        raise ValueError("Harness needs a stable id and immutable revision")
+    definitions = value["tool_definitions"]
+    if (
+        not isinstance(definitions, list)
+        or any(
+            not isinstance(t, dict)
+            or set(t) != {"name", "definition", "implementation"}
+            or not isinstance(t["name"], str)
+            or not isinstance(t["definition"], dict)
+            or not _identity(t["implementation"])
+            for t in definitions
+        )
+        or len({t["name"] for t in definitions}) != len(definitions)
+        or not {t["name"] for t in definitions} <= set(value["tools"])
+    ):
+        raise ValueError("Invalid versioned tool definitions")
+    for field in ("model", "control", "session"):
+        if value[field] is not None and not isinstance(value[field], dict):
+            raise ValueError("Invalid arrival " + field)
+    expected = {
+        "prompt_chars": len(value["prompt"]),
+        "prompt_lines": len(value["prompt"].splitlines()),
+        "code_blocks": value["prompt"].count("```"),
+        "file_count": len(files),
+        "input_bytes": sum(f["bytes"] for f in files if number(f.get("bytes"))),
+        "unknown_file_sizes": sum(not number(f.get("bytes")) for f in files),
+        "file_types": sorted({PurePath(f["name"]).suffix.lower() for f in files}),
+    }
+    if any(value[k] != v for k, v in expected.items()):
+        raise ValueError("Context summary differs from raw arrival inputs")
+    fingerprint(value)
+
+
+def compatibility_key(value: dict | None) -> str | None:
+    """A missing implementation identity never creates a shared unknown group."""
+    if not value or value.get("version") != 2 or not _identity(value.get("harness")):
+        return None
+    definitions = value.get("tool_definitions", [])
+    if len(definitions) != len(value["tools"]) or any(
+        not _identity(t.get("implementation")) for t in definitions
+    ):
+        return None
+    return fingerprint(
+        {
+            "tools": sorted(definitions, key=lambda t: t["name"]),
+            "harness": value["harness"],
+        }
+    )
+
+
+def compatible(left: dict | None, right: dict | None) -> bool:
+    """Exact capability and Harness equality is a gate, never a score."""
+    key = compatibility_key(left)
+    return key is not None and key == compatibility_key(right)
+
+
+def context_key(value: dict | None) -> str:
+    """Cache/group key includes full context, model, policy and session state."""
+    return fingerprint(value)
 
 
 def resource_distance(left: dict, right: dict) -> float:
-    """Compare declared resource scales without prompt text, intent or file encoding.
-
-    Unknown file sizes are missing evidence, not zero-byte inputs. File extensions
-    do not establish a compute or memory requirement.
-    """
+    """Compare declared scale without filling unknown sizes with zero."""
     parts = [
         abs(math.log2(1 + left["file_count"]) - math.log2(1 + right["file_count"])) / 4
     ]
@@ -160,50 +248,16 @@ def resource_distance(left: dict, right: dict) -> float:
 
 
 def distance(left: dict, right: dict) -> float:
-    """Recognize an observed intent combination, then compare its resource scale."""
-    if left["category"] != right["category"]:
-        return 1.0
-    a, b = left.get("semantic"), right.get("semantic")
-    if (left["category"] and a and b and a["primary"] == b["primary"] == "unknown"
-            and set(left["tools"]) == set(right["tools"])
-            and set(left["file_types"]) == set(right["file_types"])):
-        return resource_distance(left, right)
-    if a is None and b is None:
-        return legacy_distance(left, right)
-    if (
-        not a
-        or not b
-        or not a["intents"]
-        or not b["intents"]
-        or a["primary"] == "unknown"
-        or b["primary"] == "unknown"
-        or set(a["intents"]) != set(b["intents"])
-    ):
-        return 1.0
-    # Different capabilities/encodings can inform an uncertain prior, not a known family.
-    if set(left["tools"]) != set(right["tools"]) or set(left["file_types"]) != set(
-        right["file_types"]
-    ):
-        return 1.0
-    return resource_distance(left, right)
+    """Conservative exact-context match for callers without a semantic model."""
+    return (
+        0.0
+        if compatible(left, right) and context_key(left) == context_key(right)
+        else 1.0
+    )
 
 
 def family_key(value: dict | None) -> str:
-    """Stable intent/resource label independent of task IDs and superficial prompt size."""
-    if value is None:
-        return "global"
-    validate_descriptor(value)
-    coarse = {k: value[k] for k in ("file_types", "tools", "category")}
-    sizes = ("input_bytes", "file_count")
-    if "semantic" in value:
-        coarse["semantic"] = {
-            "version": value["semantic"]["version"],
-            "intents": sorted(value["semantic"]["intents"]),
-        }
-        coarse["hints"] = {
-            k: int(math.log2(1 + v) // 4) for k, v in value["hints"].items()
-        }
-    else:
-        sizes += ("prompt_chars",)
-    coarse.update({k: int(math.log2(1 + value[k]) // 4) for k in sizes})
-    return hashlib.sha256(json.dumps(coarse, sort_keys=True).encode()).hexdigest()[:16]
+    """Group offered load without task categories or legacy intent labels."""
+    if value is not None:
+        validate_descriptor(value)
+    return context_key(value)
