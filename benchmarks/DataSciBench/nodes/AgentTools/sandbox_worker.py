@@ -150,8 +150,7 @@ def run(request,parent,out,inputs=Path('/inputs'),branches=Path('/branches'),sha
             if execution['status']!='ok':
                 error_type=execution['error'].strip().splitlines()[-1].split(':',1)[0]
                 result.update(status='error',error_type=error_type,error=execution['error'].strip().splitlines()[-1].split(': ',1)[-1],traceback=execution['error'],stdout=execution['output'][:16000])
-                observation.complete=False
-                observation.errors.append('Analysis did not reach its output boundary')
+                # The failed branch exports no persistent state; its input read was measured.
                 return finish(observation.attach(result),started,out,cpu_start)
             invocation_evidence=None
             if request.get('task_id','').startswith('bcb') and 'solution.py' in request['outputs']:
@@ -174,7 +173,14 @@ def run(request,parent,out,inputs=Path('/inputs'),branches=Path('/branches'),sha
             exported=scope['state_out']
             if not isinstance(exported,dict):raise ValueError('state_out must be a dict')
             export_start=time.perf_counter()
-            (out/'state.pkl').write_bytes(cloudpickle.dumps(exported,protocol=5))
+            try:
+                exported_bytes=cloudpickle.dumps(exported,protocol=5)
+            except Exception:
+                observation.complete=False
+                observation.errors.append('Branch snapshot serialization failed')
+                raise
+            (out/'state.pkl').write_bytes(exported_bytes)
+            del exported_bytes
             observation.record('branch/state', 'write', lambda: (out/'state.pkl').stat().st_size)
             result['state_lifecycle'].update(branch_export_s=time.perf_counter()-export_start,branch_export_bytes=(out/'state.pkl').stat().st_size)
             files=[artifact(out/name,out,request.get('task_id'),invocation_evidence) for name in request['outputs']]
@@ -199,10 +205,10 @@ def run(request,parent,out,inputs=Path('/inputs'),branches=Path('/branches'),sha
             result.update(artifacts=files,state_signature=digest(canonical(shared)),checks=checks)
         else:raise ValueError('Unknown sandbox mode')
     except BaseException as exc:
-        # A failed validator still consumed a complete read-only input snapshot.
-        if request.get('mode')!='validate' or not state_ready:
+        # Business failure does not invalidate the snapshot accesses already measured.
+        if not state_ready:
             observation.complete=False
-        observation.errors.append('Worker execution failed: '+type(exc).__name__)
+            observation.errors.append('State restore failed: '+type(exc).__name__)
         result.update(status='error',error_type=type(exc).__name__,error=str(exc),traceback=traceback.format_exc(),
                 stdout=(out/'stdout.txt').read_text(errors='replace')[:16000] if (out/'stdout.txt').exists() else '')
     return finish(observation.attach(result),started,out,cpu_start)

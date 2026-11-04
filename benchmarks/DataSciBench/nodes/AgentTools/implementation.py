@@ -75,7 +75,7 @@ def observe_workspace(access):
             except BaseException as exc:
                 if not (access=='r' and isinstance(exc,AnalysisFailure) and exc.result.get('logical_state',{}).get('complete') is True):
                     observation.complete=False
-                observation.errors.append('Tool failed: '+type(exc).__name__)
+                    observation.errors.append('Tool failed: '+type(exc).__name__)
                 if isinstance(getattr(exc,'result',None),dict):observation.attach(exc.result)
                 raise
             finally:_observations.reset(token)

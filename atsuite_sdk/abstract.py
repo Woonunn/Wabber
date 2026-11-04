@@ -78,10 +78,11 @@ class UnifiedAgentTool:
         from atsuite_sdk.state import get_state_runtime
 
         runtime = get_state_runtime()
+        runtime.reset_logical_state()
         uid = call_args.get("uid")
         if "uid" not in inspect.signature(self.func).parameters:
             call_args.pop("uid", None)
-        with runtime.execution(self.func.__module__, uid, self.access, self.domain, snapshot_payload):
+        with runtime.execution(self.func.__module__, uid, self.access, self.domain, snapshot_payload), runtime.observe_logical_state(self.access, uid):
             result = self.func(**call_args)
             if inspect.isawaitable(result):
                 result = asyncio.run(result)

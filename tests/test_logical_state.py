@@ -219,9 +219,21 @@ fig.savefig(output_dir/'scatter_chart.png');plt.close(fig)
                                 "outputs": [],
                             }
                         )
-                    self.assertFalse(
+                    self.assertTrue(
                         failed.exception.result["logical_state"]["complete"]
                     )
+                    failed_accesses = failed.exception.result["logical_state"]["accesses"]
+                    self.assertTrue(all(a["operation"] == "read" for a in failed_accesses))
+                    self.assertIn("canonical/state", [a["object_id"] for a in failed_accesses])
+                    with self.assertRaises(impl.AnalysisFailure) as unmeasurable:
+                        impl.execute_analysis.execute_from_dict(
+                            {"uid": "test-session", "step_id": "unmeasurable", "snapshot": 1,
+                             "seed": 1, "call_id": "unmeasurable", "outputs": [],
+                             "code": "class BadState:\n    def __reduce__(self):\n        raise ValueError('cannot serialize')\nstate_out['bad'] = BadState()"}
+                        )
+                    self.assertFalse(unmeasurable.exception.result["logical_state"]["complete"])
+                    self.assertIn("Branch snapshot serialization failed",
+                                  unmeasurable.exception.result["logical_state"]["errors"])
                     return observations, profile
                 finally:
                     if impl._mcp_kernel:

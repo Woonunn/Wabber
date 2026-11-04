@@ -364,6 +364,7 @@ def wrap_tool(tool_obj):
         run_id = str((ctx or {}).get("run_id") or uuid.uuid4().hex)
         metrics = {}
         resources = {}
+        logical_state = {}
         def execute():
             try:
                 return tool_obj.execute_from_dict(call_args)
@@ -371,6 +372,7 @@ def wrap_tool(tool_obj):
                 from atsuite_sdk.resources import get_resource_usage
                 resources.update(get_resource_usage())
                 metrics.update(get_state_runtime().get_sync_metrics())
+                logical_state.update(get_state_runtime().get_logical_state())
         try:
             result = await run_in_threadpool(execute)
             elapsed_ms = _ns_to_ms(_now_ns() - started)
@@ -379,7 +381,7 @@ def wrap_tool(tool_obj):
             return ToolResult(content=result, structured_content={"result": result}, meta={"atsuite": {
                 "result_envelope": True, "request_id": request_id, "run_id": run_id,
                 "execution_elapsed_ms": elapsed_ms, "state_sync": metrics, "runtime": runtime_metadata(),
-                "resource_usage": resources,
+                "resource_usage": resources, "logical_state": logical_state,
             }})
         except Exception as exc:
             emit_event("tool_execution", run_id=run_id, request_id=request_id, uid=call_args.get("uid"),
@@ -388,7 +390,7 @@ def wrap_tool(tool_obj):
             return FailedToolResult(content=str(exc), structured_content={"result": getattr(exc, "result", None)},
                                     meta={"atsuite": {"result_envelope": True, "request_id": request_id, "run_id": run_id,
                                                       "status": "timeout" if isinstance(exc, TimeoutError) else "error",
-                                                      "execution_elapsed_ms": _ns_to_ms(_now_ns() - started), "state_sync": metrics, "runtime": runtime_metadata(), "resource_usage": resources}})
+                                                      "execution_elapsed_ms": _ns_to_ms(_now_ns() - started), "state_sync": metrics, "runtime": runtime_metadata(), "resource_usage": resources, "logical_state": logical_state}})
         finally:
             if ctx is not None:
                 ctx["tool_end_ns"] = _now_ns()

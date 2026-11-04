@@ -164,4 +164,6 @@ PyTorch CPU 安装方式参照官方说明：https://pytorch.org/get-started/pre
 
 图表按类别保存在 figure/traffic_windows/（流量窗口图及其分箱、哈希记录）和 figure/task_profiles/（六个候选任务的资源特征图）。任务图使用现有 profile，不重新执行任务；运行 uv run python -m experiments.exp1.analysis.plot_task_profiles 生成 PNG/PDF。两类绘图脚本均保留已有输出，重绘时需指定新的 --output 路径。
 
+四个固定 provider 与 Wabber 的请求序列累计美元成本图见 [绘图说明](analysis/CUMULATIVE_COST.md)。逐请求数据模板位于 `data/cumulative_cost.template.csv`，待实测数据填入后生成 PDF/SVG/PNG。
+
 Phase 5 task-composition preparation, local Docker replay and paired stage analysis: [PHASE5_README.md](PHASE5_README.md).

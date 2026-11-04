@@ -149,17 +149,19 @@ class TraceCollector:
                 if all(isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in values):
                     span[key] = sum(values)
             result = transport.get("result")
+            logical = transport.get("provider_metadata", {}).get("logical_state")
+            if isinstance(result, dict) and isinstance(result.get("logical_state"), dict):
+                logical = result["logical_state"]
+            if isinstance(logical, dict) and logical:
+                span["metadata"].pop("state_accesses", None)
+                span["metadata"]["logical_state"] = json_value(logical)
+                if logical.get("contract") in {"datasci-tool-snapshot-v1", "sdk-tool-snapshot-v1"} and logical.get("complete") is True:
+                    try:
+                        self.observe_state_accesses(span_id, logical.get("accesses"))
+                    except ValueError:
+                        span["metadata"]["logical_state"]["complete"] = False
+                        span["metadata"]["logical_state"]["errors"] = ["Invalid logical state accesses"]
             if isinstance(result, dict):
-                logical = result.get("logical_state")
-                if isinstance(logical, dict):
-                    span["metadata"].pop("state_accesses", None)
-                    span["metadata"]["logical_state"] = json_value(logical)
-                    if logical.get("contract") == "datasci-tool-snapshot-v1" and logical.get("complete") is True:
-                        try:
-                            self.observe_state_accesses(span_id, logical.get("accesses"))
-                        except ValueError:
-                            span["metadata"]["logical_state"]["complete"] = False
-                            span["metadata"]["logical_state"]["errors"] = ["Invalid logical state accesses"]
                 worker = result.get("worker_usage") or result.get("kernel_execution", {}).get("worker_usage")
                 if worker:
                     # Worker and dispatch-thread counters stay separate, never inclusive sums.

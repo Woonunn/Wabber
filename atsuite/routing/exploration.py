@@ -6,7 +6,7 @@ import math
 import random
 
 from atsuite.provider_model.model import _compatible
-from atsuite.workload.descriptor import compatible, context_key, family_key
+from atsuite.workload.descriptor import compatible, family_key, model_settings, resource_distance
 from atsuite.workload.profile import number
 
 
@@ -51,7 +51,7 @@ class Exploration:
             raise ValueError("Invalid bounded exploration policy")
 
     def evidence(self, provider, pool, descriptor, now):
-        """Count unique attempts, including failures, in the current context and epoch."""
+        """Share completed attempts across compatible settings and nearby input scales."""
         rows = []
         cutoff = max(self.config["epoch_ns"], now - self.config["window_s"] * 1e9)
         with provider.lock:
@@ -69,7 +69,9 @@ class Exploration:
                     and descriptor is not None
                     and d is not None
                     and compatible(descriptor, d)
-                    and context_key(descriptor) == context_key(d)
+                    and model_settings(descriptor.get("model")) == model_settings(d.get("model"))
+                    and descriptor.get("control") == d.get("control")
+                    and resource_distance(descriptor, d) <= 0.5
                 ):
                     rows.append(row)
         return {
@@ -82,11 +84,14 @@ class Exploration:
         """Use an optimistic analytical objective, never unobserved realized outcomes."""
 
         def score(c):
-            return cost_weight * c["objective_cost"] + latency_weight * c["objective_latency"]
+            return cost_weight * c["objective_cost"] + latency_weight * (c["objective_latency"] or 0)
+
+        def priced(c):
+            return c["objective_cost"] is not None and (latency_weight == 0 or c["objective_latency"] is not None)
 
         base = (
             score(incumbent)
-            if incumbent is not None and all(incumbent[k] is not None for k in ("objective_cost", "objective_latency"))
+            if incumbent is not None and priced(incumbent)
             else None
         )
         result = []
@@ -97,7 +102,7 @@ class Exploration:
             n, ok = evidence["attempts"], evidence["successes"]
             if c["objective_latency"] is not None and c["objective_latency"] >= c["execution_bounds"]["timeout_s"]:
                 continue
-            if base is None or c["objective_cost"] is None or c["objective_latency"] is None:
+            if base is None or not priced(c):
                 if n < self.config["min_samples"]:
                     result.append(
                         {
@@ -112,7 +117,7 @@ class Exploration:
                 continue
             if c["currency"] != incumbent["currency"]:
                 continue
-            uncertainty = self.config["optimism"] / math.sqrt(1 + n)
+            uncertainty = self.config["optimism"] / math.sqrt(1 + max(n, self.config["min_samples"]))
             optimistic = score(c) * (1 - uncertainty)
             # Failed attempts consume evidence and budget; repeatedly failing pools are not promising.
             promising = optimistic <= base and (n < self.config["min_samples"] or ok / n >= 0.5)
@@ -195,13 +200,13 @@ class Exploration:
             "predicted_objective_gain": next(
                 (
                     o["incumbent_objective"]
-                    - (cost_weight * selected["objective_cost"] + latency_weight * selected["objective_latency"])
+                    - (cost_weight * selected["objective_cost"] + latency_weight * (selected["objective_latency"] or 0))
                     for o in opportunities
                     if explored
                     and o["key"] == selected["key"]
                     and o["incumbent_objective"] is not None
                     and selected["objective_cost"] is not None
-                    and selected["objective_latency"] is not None
+                    and (latency_weight == 0 or selected["objective_latency"] is not None)
                 ),
                 None,
             ),

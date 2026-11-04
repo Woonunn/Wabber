@@ -6,7 +6,7 @@ from atsuite.workload.descriptor import describe as build_context
 def describe(*, tools=(), **kwargs):
     """Give test tools a pinned implementation and test Harness version."""
     kwargs.setdefault("harness", {"id": "test-harness", "revision": "synthetic-v1"})
-    kwargs.setdefault("model", {"name": "synthetic-model", "revision": "v1"})
+    kwargs.setdefault("model", {"name": "synthetic-model"})
     kwargs.setdefault("control", {"max_iterations": 10})
     return build_context(
         tools=[

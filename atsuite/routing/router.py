@@ -9,6 +9,7 @@ from collections import Counter
 from pathlib import Path
 
 from atsuite.provider_model.observation import (
+    BACKENDS,
     execution_context,
     trace_measurements,
     validate_pool,
@@ -288,7 +289,7 @@ class OnlineRouter:
                     flags.append("budget_exhausted")
                 if bound and (now - arrival) / 1e9 + time.perf_counter() - prediction_start >= bound["timeout_s"]:
                     flags.append("execution_deadline_elapsed")
-                cost = pred.get("analytical_cost")
+                cost = pred.get("decision_cost", pred.get("analytical_cost"))
                 if cost and not cost["complete"]:
                     cost = None
                 amount = cost["total"]["mean"] if cost else None
@@ -495,7 +496,14 @@ class OnlineRouter:
                 "arrival_ns": trace["arrival_ns"],
                 "completed_ns": trace["completed_ns"],
                 "available_ns": now,
-                "cost": None,
+                "cost": {
+                    "basis": "actual" if cost_basis == "attributable_execution_cost" else "estimated",
+                    "currency": BACKENDS[decision["pool_snapshot"][selected]["provider"]][2],
+                    "scope": "request_execution", "complete": True,
+                    "components": {"execution": actual_cost},
+                    "attribution": "exclusive",
+                    "evidence": [f"router.complete:{request_id}:{cost_basis}"],
+                } if actual_cost is not None else None,
                 "measurements": trace_measurements(trace),
             }
             self.workload.update(profile, now, descriptor=decision["descriptor"])

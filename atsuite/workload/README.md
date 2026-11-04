@@ -14,13 +14,13 @@ context = describe(
     tools=[{"name": "python", "definition": exported_tool_schema,
             "implementation": {"id": "package/python", "revision": deployment_digest}}],
     harness={"id": "langgraph/my-agent", "revision": harness_digest},
-    model={"name": model_name, "revision": immutable_model_revision},
+    model={"name": model_name, "temperature": 0},
     control={"max_iterations": 20, "max_parallel": 3},
     session={"messages": visible_messages, "objects": visible_object_inventory},
 )
 ```
 
-`revision` 必须来自可追溯、不可变的代码/镜像/模型版本或制品摘要。不要使用 endpoint、工具名称、工具数量、workload 名称或可变的 `latest` 标签代替实现身份。工具的完整定义也参与身份哈希；改变实现、schema、Harness 任一项即隔离。相同集合不受工具顺序影响。身份是可信部署配置，不从 Prompt 生成。
+工具和 Harness 的 `revision` 必须来自可追溯的代码/镜像版本或制品摘要。不要使用 endpoint、工具名称、工具数量、workload 名称或可变的 `latest` 标签代替实现身份。工具的完整定义也参与身份哈希；改变实现、schema、Harness 任一项即隔离。相同集合不受工具顺序影响。身份是可信部署配置，不从 Prompt 生成。规划模型不再使用 `model.revision`，新描述符不保存它；旧记录中的该字段也不参与上下文键、置信门槛和残差匹配。模型名称和实际生成参数仍保留。
 
 `describe_request(task, config, workload)` 从现有 LangGraph runner 的实际输入构建上下文，读取 `config.prediction_identity.tools` 与 `.harness`。非 DataSci 的工具定义必须与实际 `task.tool_definitions` 一致。没有部署锁定身份的配置仍可执行受约束默认方案，但不可检索历史。部署和 Harness 应在构建/发布时产出这些身份，不能仅根据当前 checkout 猜测远端代码版本。
 
@@ -81,6 +81,12 @@ BGE 重排只返回相关性分数，不支持行为判断指令，也不产生�
 ## 观测、联合预测与反馈
 
 每份 profile 保留冻结的 `descriptor` 和执行后的 `observations`：工具参数、依赖/时间区间、资源、逻辑状态访问、物理同步、LLM 调用与重试元数据。原始 `trace.json` 也保存执行前上下文。缺失测量保持 `None`。
+
+SDK 调用现在通过 FaaS/MCP 元数据返回 `sdk-tool-snapshot-v1`：无状态或已确认空状态的调用显式记录 `accesses=[]`，使状态字节、读写次数、最大对象大小均为零；有状态调用记录 SDK 管理的注册对象与会话文件的快照需求，并单列观测开销。不可测对象或文件观测失败仍为未知，不回填零。DataSci 自带的更细粒度观测优先。该记录描述逻辑快照需求，不是 MCP 物理对象存储流量，也不补写旧轨迹。
+
+探索统计共享相同工具/Harness、模型参数、控制策略且规模距离不超过 0.5 的已完成尝试，包括失败；不再要求 Prompt、文件名和内容摘要完全相同。时间窗口、执行环境和资源隔离仍保留，探索概率随共享样本数衰减，最大乐观程度也不会把冷启动候选成本直接压成零。
+
+Router `complete(actual_cost=...)` 将本次费用同时保存到 ProviderModel。即使配置费率表，仍预测此前可用、费用范围完整且可归属单请求的历史成本；达到样本和支持范围要求后，路由优先使用该费用预测，否则保留解析成本估算。部分费用、共享总账和未来费用不可作为完整单请求价格。实际费用与估算费用保持各自标记；平台和币种不混用。
 
 现有统计口径不变：D 为累计 LLM span 时间（包括已记录重试），不是区间并集；原始起止时间保留重叠证据。S 的逻辑访问量与实际 `state_transfer_bytes` 分开。MCP Session 继续保留内存状态；FaaS 每次 Tool 执行继续恢复/持久化对象存储状态，本次不改变该生命周期。
 

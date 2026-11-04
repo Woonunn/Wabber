@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from atsuite.tracing.storage import read_text, write_json
-from atsuite.workload.descriptor import compatible, context_key, validate_descriptor
+from atsuite.workload.descriptor import compatible, context_key, model_settings, validate_descriptor
 from atsuite.workload.profile import METRICS, extract_profile, number
 from atsuite.workload.retrieval import ContextBackend, ContextRetriever
 
@@ -252,12 +252,6 @@ class WorkloadModel:
                 for k in ("model", "control")
                 if not descriptor or descriptor.get(k) is None
             ]
-            if (
-                descriptor
-                and descriptor.get("model") is not None
-                and not descriptor["model"].get("revision")
-            ):
-                missing_context.append("model.revision")
             attempts = sum(p["status"] != "incomplete" for p in eligible)
             failures = sum(p["status"] == "failed" for p in eligible)
             return {
@@ -372,7 +366,7 @@ class WorkloadModel:
             if e["available_ns"] < as_of_ns
             and e["revision"] == self.retriever.revision
             and compatible(descriptor, e["descriptor"])
-            and e["descriptor"].get("model") == descriptor.get("model")
+            and model_settings(e["descriptor"].get("model")) == model_settings(descriptor.get("model"))
             and e["descriptor"].get("control") == descriptor.get("control")
         ]
         intervals = {}

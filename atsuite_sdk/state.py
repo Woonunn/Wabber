@@ -21,6 +21,7 @@ _SKIP = object()
 _CURRENT_UID = contextvars.ContextVar("atsuite_current_uid", default="default")
 _EXECUTION = contextvars.ContextVar("atsuite_state_execution", default=None)
 _SYNC_TIMING = contextvars.ContextVar("atsuite_state_sync_timing", default=None)
+_LOGICAL_STATE = contextvars.ContextVar("atsuite_logical_state", default=None)
 
 
 def _safe_uid(uid: Optional[str]) -> str:
@@ -196,6 +197,62 @@ class StateRuntime:
         if any(flag in mode for flag in ("w", "a", "x", "+")):
             path.parent.mkdir(parents=True, exist_ok=True)
         return path.open(mode, *args, **kwargs)
+
+    def reset_logical_state(self) -> None:
+        """A call that fails before observation must not inherit the previous call."""
+        _LOGICAL_STATE.set(None)
+
+    def get_logical_state(self) -> dict:
+        """Return logical snapshot demand, independently of physical state transfers."""
+        return copy.deepcopy(_LOGICAL_STATE.get() or {})
+
+    @contextmanager
+    def observe_logical_state(self, access: str, uid: Optional[str]):
+        """Measure SDK-managed object/file snapshots; stateless calls explicitly emit []."""
+        observation = {"contract": "sdk-tool-snapshot-v1", "complete": True,
+                       "scope": "SDK-managed persistent objects and session files",
+                       "accesses": [], "observation_s": 0.0, "errors": []}
+        _LOGICAL_STATE.set(observation)
+
+        def record(operation):
+            started = time.perf_counter()
+            try:
+                for module, named in self._registry.items():
+                    for name, obj in named.items():
+                        target = obj._current() if isinstance(obj, SessionObject) else obj
+                        state = {}
+                        for key, value in vars(target).items():
+                            if key.startswith("_") or callable(value):
+                                continue
+                            encoded = self._to_json_compatible(value)
+                            if encoded is _SKIP:
+                                raise ValueError("Unmeasured registered state")
+                            state[key] = encoded
+                        if state:
+                            size = len(json.dumps(state, ensure_ascii=False, allow_nan=False).encode("utf-8"))
+                            observation["accesses"].append({"object_id": f"object:{module}:{name}",
+                                                           "operation": operation, "bytes": size})
+                base = self.session_dir(uid).resolve()
+                for path in sorted(base.rglob("*")):
+                    if path.is_file():
+                        if not path.resolve().is_relative_to(base):
+                            raise ValueError("State file escapes session directory")
+                        observation["accesses"].append({"object_id": "file:" + path.relative_to(base).as_posix(),
+                                                       "operation": operation, "bytes": path.stat().st_size})
+            except Exception as exc:
+                observation["complete"] = False
+                observation["errors"].append(type(exc).__name__)
+            finally:
+                observation["observation_s"] += time.perf_counter() - started
+
+        if access in {"r", "rw"}:
+            record("read")
+        try:
+            yield
+        finally:
+            if access in {"w", "rw"}:
+                record("write")
+            _LOGICAL_STATE.set(observation)
 
     def reset_sync_metrics(self) -> None:
         _SYNC_TIMING.set({"load_ms": 0.0, "save_ms": 0.0,

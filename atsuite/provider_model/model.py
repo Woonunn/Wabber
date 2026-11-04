@@ -335,21 +335,11 @@ class ProviderModel:
             card = pool.get("billing", self.tariffs.get(pool["provider"]))
             costs = []
             # Each scope is separate: partial subtotals never masquerade as a full bill.
-            groups = (
-                []
-                if card
-                else sorted(
-                    {
-                        (
-                            r["kind"],
-                            r["cost"]["scope"],
-                            r["cost"]["basis"],
-                            r["cost"]["complete"],
-                        )
-                        for r in candidates
-                        if r.get("cost")
-                    }
-                )
+            groups = sorted(
+                {
+                    (r["kind"], r["cost"]["scope"], r["cost"]["basis"], r["cost"]["complete"])
+                    for r in candidates if r.get("cost")
+                }
             )
             for kind, scope, basis, complete in groups:
                 source = [
@@ -384,6 +374,11 @@ class ProviderModel:
                         "total": _distribution(values, len(chosen)) if complete else None,
                         "components": {k: _distribution(v, len(chosen)) for k, v in components.items()},
                         "coverage": cost_coverage,
+                        "confidence": target_confidence(
+                            cost_coverage, len({r["id"] for r in chosen}),
+                            required={"tool_elapsed_s", "parallel_peak", "load_rps"},
+                            minimum=self.minimum_samples, marginal=marginal,
+                        ),
                         "source_count": len(source),
                         "note": "Inclusive pool window; stationary rate scaled to horizon; do not add request costs"
                         if kind == "window"
@@ -436,6 +431,13 @@ class ProviderModel:
             ):
                 cost_confidence["reasons"].append("cost_evidence_insufficient")
             cost_confidence["reliable"] = not cost_confidence["reasons"]
+            empirical = next((
+                c for c in sorted(costs, key=lambda c: c["training_basis"] != "actual")
+                if c["kind"] == "request" and c["scope"] in {"request_execution", "matched_native_usage"}
+                and c["complete"] and c["confidence"]["reliable"]
+            ), None)
+            if empirical:
+                cost_confidence = {**empirical["confidence"], "missing_cost_evidence": []}
             latency_evidence = len({r["id"] for r in selected if number(r["measurements"].get("latency_s"))})
             latency_confidence["measured_target_samples"] = latency_evidence
             if latency_evidence < minimum:
@@ -449,9 +451,10 @@ class ProviderModel:
                     "latency": metrics.pop("latency_s"),
                     "measurements": metrics,
                     "capacity": capacity,
-                    "cost": [analytical] if analytical else costs,
+                    "cost": ([analytical] if analytical else []) + costs,
                     "historical_cost": costs,
                     "analytical_cost": analytical,
+                    "decision_cost": empirical or analytical,
                     "status_counts": dict(Counter(r["status"] for r in requests)),
                     "sample_count": len(successes),
                     "selected_unique_count": len({r["id"] for r in selected}),
@@ -459,7 +462,7 @@ class ProviderModel:
                     "confidence": {"latency": latency_confidence, "cost": cost_confidence},
                     "low_confidence": not (latency_confidence["reliable"] and cost_confidence["reliable"]),
                     "latency_scope": "successful requests, observed queue/cold-start mixture; no additive p95",
-                    "cost_missing": not analytical["complete"] if analytical else not costs,
+                    "cost_missing": not empirical and (not analytical["complete"] if analytical else not costs),
                 }
             )
         return {

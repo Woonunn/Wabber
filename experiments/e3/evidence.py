@@ -26,6 +26,8 @@ def price_request(row: dict, config: dict, native_sessions: dict | None = None) 
     usage = row["usage"]
     metrics = []
     missing = []
+    if row.get("tool_attempts", usage["tool_calls"]) > usage["tool_calls"]:
+        missing.append("Tool attempt has no recorded native response")
     if provider == "aws_agentcore":
         for s in usage.get("sessions", []):
             if s.get("vcpu_hours") is None or s.get("memory_gb_hours") is None:
@@ -114,12 +116,17 @@ def price_request(row: dict, config: dict, native_sessions: dict | None = None) 
             )
         )
     lines = [line.to_dict() for line in price_metrics(context, metrics, state)]
-    if not metrics and usage["tool_calls"]:
+    # FC opens only a local handle; MCP initialization still creates a billable Session.
+    zero_fc = (
+        provider == "ali_fc" and row.get("tool_attempts") == 0 and row.get("sessions_closed")
+        and not usage["tool_calls"] and not profile.get("state_transfer_bytes")
+    )
+    if not metrics and not zero_fc:
         missing.append("no native priced metrics")
     return {
         "basis": "atsuite_metered_usage_pricing",
         "currency": "CNY" if provider.startswith("ali") else "USD",
-        "total": sum(line["amount"] for line in lines) if not missing and metrics else None,
+        "total": sum(line["amount"] for line in lines) if not missing and (metrics or zero_fc) else None,
         "observed_subtotal": sum(line["amount"] for line in lines),
         "lines": lines,
         "missing": missing,
@@ -316,6 +323,12 @@ def reconcile(run: Path, usage: Path, output: Path, config: dict | None = None, 
             indexes[key] = usage_index(usage / kind / (provider + "-usage.json"), provider)
         events = [json.loads(line) for line in read_text(Path(row["directory"]) / "events.jsonl").splitlines()]
         tools = [e["transport"] for e in events if e["kind"] == "tool"]
+        initializations = [
+            {"provider_request_id": e.get("metadata", {}).get("initialize_request_id"),
+             "provider_metadata": {"session_id": e["provider_session_id"]}}
+            for e in events if provider == "ali_agentrun" and e["kind"] == "tool_session_open"
+            and e.get("provider_session_id")
+        ]
         sessions = set()
         for tool in tools:
             metadata = tool.get("provider_metadata", {})
@@ -323,6 +336,7 @@ def reconcile(run: Path, usage: Path, output: Path, config: dict | None = None, 
                 raise ValueError("Tool executed outside its selected provider: " + row["directory"])
             if metadata.get("session_id"):
                 sessions.add(metadata["session_id"])
+        sessions.update(e["provider_metadata"]["session_id"] for e in initializations)
         if len(sessions) > 1:
             raise ValueError("Request changed native Session: " + row["directory"])
         for session in sessions:
@@ -341,9 +355,13 @@ def reconcile(run: Path, usage: Path, output: Path, config: dict | None = None, 
                     continue
                 if receipt.get("http_status") == 404 and sid in request_sessions:
                     continue
-                measured = released_session_usage(sid, receipt, tools, indexes[key])
+                measured = released_session_usage(sid, receipt, tools + initializations, indexes[key])
                 if measured:
                     request_sessions[sid] = measured
+        usage_row = measured_usage(provider, tools, indexes[key])
+        if provider == "ali_agentrun":
+            usage_row["native_session_ids"] = sorted(sessions)
+            usage_row["initialize_request_ids"] = [e["provider_request_id"] for e in initializations if e["provider_request_id"]]
         measurements.append(
             {
                 **{
@@ -351,6 +369,8 @@ def reconcile(run: Path, usage: Path, output: Path, config: dict | None = None, 
                 },
                 "profile_metrics": row.get("profile", {}).get("metrics", {}),
                 "sessions_closed": any(e["kind"] == "tool_sessions_closed" for e in events),
+                "tool_attempts": max(sum(e["kind"] == "tool_start" for e in events),
+                                     len(tools) + sum(e["kind"] == "tool_error" for e in events)),
                 "session_release_receipts": releases,
                 "native_session_lifecycle": {sid: request_sessions[sid] for sid in sessions if sid in request_sessions},
                 "last_tool_epoch_s": max(
@@ -361,7 +381,7 @@ def reconcile(run: Path, usage: Path, output: Path, config: dict | None = None, 
                     "reads": sum(bool(s.get("load_bytes")) for s in syncs),
                     "writes": sum(bool(s.get("save_bytes")) for s in syncs),
                 },
-                "usage": measured_usage(provider, tools, indexes[key]),
+                "usage": usage_row,
             }
         )
         if config is not None:

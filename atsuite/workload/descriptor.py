@@ -42,6 +42,13 @@ def fingerprint(value: object) -> str:
     ).hexdigest()
 
 
+def model_settings(model: dict | None) -> dict | None:
+    """Keep model and generation settings; legacy revision metadata is ignored."""
+    if model is not None and not isinstance(model, dict):
+        raise ValueError("Invalid model settings")
+    return {k: v for k, v in model.items() if k != "revision"} if model is not None else None
+
+
 def _identity(value: object) -> bool:
     return (
         isinstance(value, dict)
@@ -87,7 +94,7 @@ def describe(
         "files": files,
         "tool_definitions": definitions,
         "harness": copy.deepcopy(harness),
-        "model": copy.deepcopy(model),
+        "model": copy.deepcopy(model_settings(model)),
         "control": copy.deepcopy(control),
         "session": copy.deepcopy(session),
         "prompt_chars": len(prompt),
@@ -220,6 +227,8 @@ def compatible(left: dict | None, right: dict | None) -> bool:
 
 def context_key(value: dict | None) -> str:
     """Cache/group key includes full context, model, policy and session state."""
+    if value and "model" in value:
+        value = {**value, "model": model_settings(value["model"])}
     return fingerprint(value)
 
 
