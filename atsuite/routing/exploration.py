@@ -1,4 +1,4 @@
-"""Budgeted contextual epsilon-greedy; all evidence is visible before the decision."""
+"""Contextual epsilon-greedy; all evidence is visible before the decision."""
 
 import hashlib
 import json
@@ -39,10 +39,8 @@ class Exploration:
         c = self.config
         if (
             c["strategy"] not in {"contextual", "random"}
-            or any(
-                not number(c.get(k))
-                for k in ("epsilon", "budget", "window_s", "epoch_ns", "optimism")
-            )
+            or any(not number(c.get(k)) for k in ("epsilon", "window_s", "epoch_ns", "optimism"))
+            or ("budget" in c and not number(c["budget"]))
             or c["epsilon"] > 1
             or c["optimism"] > 1
             or c["window_s"] == 0
@@ -83,14 +81,13 @@ class Exploration:
         """Use an optimistic analytical objective, never unobserved realized outcomes."""
 
         def score(c):
-            return (
-                cost_weight * c["objective_cost"]
-                + latency_weight * c["objective_latency"]
-            )
+            return cost_weight * c["objective_cost"] + latency_weight * c["objective_latency"]
 
-        base = score(incumbent) if incumbent is not None and all(
-            incumbent[k] is not None for k in ("objective_cost", "objective_latency")
-        ) else None
+        base = (
+            score(incumbent)
+            if incumbent is not None and all(incumbent[k] is not None for k in ("objective_cost", "objective_latency"))
+            else None
+        )
         result = []
         for c in candidates:
             if (incumbent and c["key"] == incumbent["key"]) or c["flags"] or not c["execution_bounds"]:
@@ -101,27 +98,28 @@ class Exploration:
                 continue
             if base is None or c["objective_cost"] is None or c["objective_latency"] is None:
                 if n < self.config["min_samples"]:
-                    result.append({"key": c["key"], "weight": 1 / math.sqrt(1 + n),
-                                   "reason": "bounded_cold_start", "optimistic_objective": None,
-                                   "incumbent_objective": base, "evidence": evidence})
+                    result.append(
+                        {
+                            "key": c["key"],
+                            "weight": 1 / math.sqrt(1 + n),
+                            "reason": "bounded_cold_start",
+                            "optimistic_objective": None,
+                            "incumbent_objective": base,
+                            "evidence": evidence,
+                        }
+                    )
                 continue
-            if (
-                c["currency"] != incumbent["currency"]
-            ):
+            if c["currency"] != incumbent["currency"]:
                 continue
             uncertainty = self.config["optimism"] / math.sqrt(1 + n)
             optimistic = score(c) * (1 - uncertainty)
             # Failed attempts consume evidence and budget; repeatedly failing pools are not promising.
-            promising = optimistic <= base and (
-                n < self.config["min_samples"] or ok / n >= 0.5
-            )
+            promising = optimistic <= base and (n < self.config["min_samples"] or ok / n >= 0.5)
             if self.config["strategy"] == "random" or promising:
                 result.append(
                     {
                         "key": c["key"],
-                        "weight": 1
-                        if self.config["strategy"] == "random"
-                        else 1 / math.sqrt(1 + n),
+                        "weight": 1 if self.config["strategy"] == "random" else 1 / math.sqrt(1 + n),
                         "reason": "random_baseline"
                         if self.config["strategy"] == "random"
                         else "uncertain_analytical_opportunity",
@@ -144,14 +142,10 @@ class Exploration:
         latency_weight,
     ):
         """Return a draw and its full propensity distribution, conditional on feasible pools."""
-        eligible = [c for c in candidates if c["reserved_cost"] <= remaining]
-        opportunities = self.opportunities(
-            eligible, incumbent, cost_weight=cost_weight, latency_weight=latency_weight
-        )
+        eligible = [c for c in candidates if remaining is None or c["reserved_cost"] <= remaining]
+        opportunities = self.opportunities(eligible, incumbent, cost_weight=cost_weight, latency_weight=latency_weight)
         attempts = sum(c["evidence"]["attempts"] for c in candidates)
-        epsilon = self.config["epsilon"] / math.sqrt(
-            1 + attempts / self.config["min_samples"]
-        )
+        epsilon = self.config["epsilon"] / math.sqrt(1 + attempts / self.config["min_samples"])
         if not opportunities:
             epsilon = 0.0
         elif incumbent is None and epsilon > 0:
@@ -162,9 +156,7 @@ class Exploration:
         total = sum(o["weight"] for o in opportunities)
         for o in opportunities:
             probabilities[o["key"]] = epsilon * o["weight"] / total
-        seed = hashlib.sha256(
-            f"{self.config['seed']}:{self.config['epoch_ns']}:{request_id}".encode()
-        ).digest()
+        seed = hashlib.sha256(f"{self.config['seed']}:{self.config['epoch_ns']}:{request_id}".encode()).digest()
         draw, cumulative, selected = random.Random(seed).random(), 0.0, incumbent
         for c in candidates:
             cumulative += probabilities[c["key"]]
@@ -184,28 +176,28 @@ class Exploration:
             "selection_probability": probabilities[selected["key"]] if selected else 0,
             "opportunities": opportunities,
             "remaining_budget": remaining,
-            "budget_excluded": [c["key"] for c in candidates if not c["flags"] and c["reserved_cost"] > remaining],
+            "budget_excluded": [
+                c["key"]
+                for c in candidates
+                if remaining is not None and not c["flags"] and c["reserved_cost"] > remaining
+            ],
             "reason": next(
-                (
-                    o["reason"]
-                    for o in opportunities
-                    if selected and o["key"] == selected["key"]
-                ),
-                "exploration_disabled" if self.config["epsilon"] == 0
-                else "exploration_not_selected" if opportunities
-                else "exploration_budget_exhausted" if any(
-                    not c["flags"] and c["reserved_cost"] > remaining for c in candidates
-                ) else "no_exploration_opportunity",
+                (o["reason"] for o in opportunities if selected and o["key"] == selected["key"]),
+                "exploration_disabled"
+                if self.config["epsilon"] == 0
+                else "exploration_not_selected"
+                if opportunities
+                else "exploration_budget_exhausted"
+                if any(remaining is not None and not c["flags"] and c["reserved_cost"] > remaining for c in candidates)
+                else "no_exploration_opportunity",
             ),
             "predicted_objective_gain": next(
                 (
                     o["incumbent_objective"]
-                    - (
-                        cost_weight * selected["objective_cost"]
-                        + latency_weight * selected["objective_latency"]
-                    )
+                    - (cost_weight * selected["objective_cost"] + latency_weight * selected["objective_latency"])
                     for o in opportunities
-                    if explored and o["key"] == selected["key"]
+                    if explored
+                    and o["key"] == selected["key"]
                     and o["incumbent_objective"] is not None
                     and selected["objective_cost"] is not None
                     and selected["objective_latency"] is not None
@@ -219,7 +211,5 @@ class Exploration:
 def model_revision(provider, pools):
     """Record the exact price/environment configuration used by the decision."""
     return hashlib.sha256(
-        json.dumps(
-            {"tariffs": provider.tariffs, "pools": pools}, sort_keys=True
-        ).encode()
+        json.dumps({"tariffs": provider.tariffs, "pools": pools}, sort_keys=True).encode()
     ).hexdigest()

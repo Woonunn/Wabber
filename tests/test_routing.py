@@ -269,3 +269,95 @@ class CaptureRoutingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(report["paired_best_fraction"]["cost_latency"], 1)
         self.assertIn("not mixed-routing", report["scope"])
+
+
+class ConfidenceRankingTests(unittest.TestCase):
+    def router(self):
+        from unittest.mock import Mock
+        from atsuite.workload import describe
+
+        pools = {
+            name: {**pool(), "environment": name} for name in ["cheap", "experienced"]
+        }
+        model = ProviderModel()
+
+        def prediction(profiles, targets, load, **kwargs):
+            cheap = targets[0]["environment"] == "cheap"
+            return {
+                "pools": [
+                    {
+                        "mode": "state-decoupled",
+                        "analytical_cost": {
+                            "complete": True,
+                            "currency": "USD",
+                            "total": {"mean": 0.001 if cheap else 0.1},
+                        },
+                        "latency": {"mean": 5},
+                        "confidence": {
+                            "cost": {"reliable": not cheap},
+                            "latency": {"reliable": not cheap},
+                        },
+                    }
+                ]
+            }
+
+        model.predict = Mock(side_effect=prediction)
+        workload = Mock()
+        workload.predict.return_value = {"joint_profiles": [], "low_confidence": True}
+        execution = bounds()
+        execution.pop("max_cost")
+        router = OnlineRouter(
+            workload,
+            model,
+            pools,
+            dict.fromkeys(pools, 1),
+            default_pool="experienced",
+            execution_bounds={name: copy.deepcopy(execution) for name in pools},
+        )
+        return router, describe(prompt="Compute mean", tools=["python"])
+
+    def test_uncertain_cheaper_pool_stays_in_normal_ranking_at_low_and_high_load(self):
+        for load in [0.5, 100]:
+            router, descriptor = self.router()
+            decision = router.decide(
+                "new", load_rps=load, descriptor=descriptor, as_of_ns=10000, shadow=True
+            )
+            self.assertEqual(decision["selected"], "cheap")
+            self.assertEqual(decision["reason"], "cost_latency_objective")
+            cheap = next(c for c in decision["candidates"] if c["key"] == "cheap")
+            self.assertIn("cost_prediction_unreliable", cheap["prediction_flags"])
+            self.assertIn("workload_history_insufficient", cheap["prediction_flags"])
+
+    def test_cost_only_ranking_does_not_require_an_unused_latency_prediction(self):
+        router, descriptor = self.router()
+        router.latency_weight = 0
+        original = router.provider.predict.side_effect
+
+        def predict(*args, **kwargs):
+            result = original(*args, **kwargs)
+            if args[1][0]["environment"] == "cheap":
+                result["pools"][0]["latency"]["mean"] = None
+            return result
+
+        router.provider.predict.side_effect = predict
+        decision = router.decide("cost-only", descriptor=descriptor, as_of_ns=10000)
+        self.assertEqual(decision["selected"], "cheap")
+        cheap = next(c for c in decision["candidates"] if c["key"] == "cheap")
+        self.assertIsNone(cheap["objective_latency"])
+        self.assertIn("latency_prediction_missing", cheap["prediction_flags"])
+
+    def test_uncertain_cheaper_pool_still_obeys_real_capacity_and_tool_constraints(
+        self,
+    ):
+        for restriction in ["full", "unknown", "tools"]:
+            router, descriptor = self.router()
+            if restriction == "tools":
+                router.execution_bounds["cheap"]["tools"] = []
+            else:
+                router.limits["cheap"] = 0 if restriction == "full" else None
+            decision = router.decide(
+                "blocked", load_rps=100, descriptor=descriptor, as_of_ns=10000
+            )
+            self.assertEqual(decision["selected"], "experienced")
+            cheap = next(c for c in decision["candidates"] if c["key"] == "cheap")
+            self.assertTrue(cheap["flags"])

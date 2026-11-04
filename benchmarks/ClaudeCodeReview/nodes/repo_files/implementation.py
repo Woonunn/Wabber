@@ -23,7 +23,7 @@ def _safe_path(path: str) -> Path:
 
 def _iter_repo_files(root: Path):
     for path in sorted(root.rglob("*")):
-        if not path.is_file():
+        if not path.is_file() or not path.resolve().is_relative_to(root.resolve()):
             continue
         rel_path = path.relative_to(root)
         if ".git" in rel_path.parts:
@@ -49,7 +49,7 @@ def _normalize_line_window(offset: int, limit: int, total_lines: int) -> tuple[i
     return (start, end)
 
 
-@registry.tool()
+@registry.tool(access="r", domain="review")
 def ls(path: str = ".", max_entries: int = 200) -> dict[str, Any]:
     """List files in the deterministic Claude Code review fixture repository."""
     repo_root = _ensure_repo().resolve()
@@ -76,7 +76,7 @@ def ls(path: str = ".", max_entries: int = 200) -> dict[str, Any]:
     return {"root": path, "entries": entries}
 
 
-@registry.tool()
+@registry.tool(access="r", domain="review")
 def glob_files(pattern: str, path: str = ".", max_results: int = 200) -> dict[str, Any]:
     """Match files with a glob pattern inside the fixture repository."""
     repo_root = _ensure_repo()
@@ -84,12 +84,16 @@ def glob_files(pattern: str, path: str = ".", max_results: int = 200) -> dict[st
     matches: list[str] = []
 
     for file_path in _iter_repo_files(repo_root):
-        try:
-            file_path.relative_to(base)
-        except ValueError:
-            continue
+        if base.is_file():
+            if file_path != base:
+                continue
+            relative_to_base = file_path.name
+        else:
+            try:
+                relative_to_base = str(file_path.relative_to(base))
+            except ValueError:
+                continue
         rel_path = str(file_path.relative_to(repo_root))
-        relative_to_base = str(file_path.relative_to(base))
         if _matches_glob(relative_to_base, pattern) or _matches_glob(rel_path, pattern):
             matches.append(rel_path)
             if len(matches) >= max_results:
@@ -98,7 +102,7 @@ def glob_files(pattern: str, path: str = ".", max_results: int = 200) -> dict[st
     return {"pattern": pattern, "path": path, "matches": matches}
 
 
-@registry.tool()
+@registry.tool(access="r", domain="review")
 def grep_text(
     pattern: str,
     path: str = ".",
@@ -112,18 +116,25 @@ def grep_text(
     matches = []
 
     for file_path in _iter_repo_files(repo_root):
-        try:
-            file_path.relative_to(base)
-        except ValueError:
-            continue
+        if base.is_file():
+            if file_path != base:
+                continue
+            relative_to_base = file_path.name
+        else:
+            try:
+                relative_to_base = str(file_path.relative_to(base))
+            except ValueError:
+                continue
         rel_path = str(file_path.relative_to(repo_root))
-        relative_to_base = str(file_path.relative_to(base))
         if not (_matches_glob(relative_to_base, glob) or _matches_glob(rel_path, glob)):
             continue
-        for line_number, line in enumerate(
-            file_path.read_text(encoding="utf-8").splitlines(),
-            start=1,
-        ):
+        try:
+            text = file_path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        if "\x00" in text:
+            continue
+        for line_number, line in enumerate(text.splitlines(), start=1):
             if not regex.search(line):
                 continue
             matches.append(
@@ -144,7 +155,7 @@ def grep_text(
     return {"pattern": pattern, "path": path, "glob": glob, "matches": matches}
 
 
-@registry.tool()
+@registry.tool(access="r", domain="review")
 def read_file(path: str, offset: int = 1, limit: int = 200) -> dict[str, Any]:
     """Read file content with line numbers from the fixture repository."""
     target = _safe_path(path)
@@ -162,7 +173,7 @@ def read_file(path: str, offset: int = 1, limit: int = 200) -> dict[str, Any]:
     }
 
 
-@registry.tool()
+@registry.tool(access="r", domain="review")
 def todo_write(todos: list[dict[str, str]]) -> dict[str, Any]:
     """Store the current review checklist snapshot."""
     normalized = []

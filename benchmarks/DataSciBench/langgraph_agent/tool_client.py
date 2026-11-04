@@ -1,10 +1,14 @@
 import asyncio,json,re,time,uuid
+from contextlib import ExitStack
 from pathlib import Path
 from atsuite.runtime import InvocationRequest,create_runtime_adapter
 from atsuite.tracing.storage import read_text
 
 
 class DivergenceError(RuntimeError):pass
+
+
+class ToolExecutionError(RuntimeError):pass
 
 
 def bcb_error(value):
@@ -37,14 +41,20 @@ def semantic(result):
 
 
 class ToolClient:
-    def __init__(self,config,recorder,capture=None,calibration=False):
+    def __init__(self,config,recorder,capture=None,calibration=False,*,result_view=semantic,result_equal=None):
+        self.result_equal=result_equal or (lambda left,right:left==right)
+        self.result_view=result_view
         if calibration and not capture:raise ValueError("Calibration requires a frozen Capture")
         self.calibration=calibration
         self.recorder=recorder;self.target_id=config['target_id'];self.expected_impl=config.get('expected_implementation_sha256');self.uid=uuid.uuid4().hex
         self.adapter=create_runtime_adapter(config['provider'],config['family'])
-        self.adapter.connect({'targets':{self.target_id:{'endpoint':config['endpoint'],'family':config['family']}}})
-        self.session=self.adapter.open_session(self.adapter.targets[self.target_id],self.uid)
-        self.recorder.emit('tool_session_open',uid=self.uid,target_id=self.target_id,provider_session_id=self.session.provider_session_id,metadata=self.session.metadata)
+        targets=config.get('targets') or {self.target_id:{'endpoint':config['endpoint'],'family':config['family']}}
+        if any(t.get('family',config['family'])!=config['family'] for t in targets.values()):
+            raise ValueError('All request tools must use one execution mode')
+        self.tool_targets=config.get('tool_targets',{})
+        if self.target_id not in targets or not set(self.tool_targets.values())<=targets.keys():
+            raise ValueError('Tool target outside selected execution pool')
+        self.adapter.connect({'targets':targets})
         self.expected={}
         if capture:
             for line in read_text(Path(capture)/'events.jsonl').splitlines():
@@ -59,6 +69,9 @@ class ToolClient:
             original={a['signature'] for e in self.expected.values() for a in e.get('result',{}).get('artifacts',[]) if a['name']==name}
             if original!={policy['reference_signature']}:raise ValueError('Rendering policy does not match the original Capture')
         self.replay=capture is not None;self.consumed=set();self.timeout=config.get('timeout',240);self.rpc_tasks=[]
+        self.session=self.adapter.open_session(self.adapter.targets[self.target_id],self.uid)
+        self.sessions={self.target_id:self.session}
+        self.recorder.emit('tool_session_open',uid=self.uid,target_id=self.target_id,provider_session_id=self.session.provider_session_id,metadata=self.session.metadata)
 
     def comparable(self,value):
         if isinstance(value,list):return [self.comparable(v) for v in value]
@@ -87,11 +100,17 @@ class ToolClient:
             compare=self.calibration_view if self.calibration and name=='merge_artifacts' else self.comparable
             if expected is None or expected['tool_name']!=name or compare(expected['args'])!=compare(args):
                 raise DivergenceError('Replay Tool parameters diverged: '+key)
+        target_id=self.tool_targets.get(name,self.target_id)
+        if target_id not in self.sessions:
+            opening=asyncio.create_task(asyncio.to_thread(self.adapter.open_session,self.adapter.targets[target_id],self.uid))
+            self.rpc_tasks.append(opening)
+            self.sessions[target_id]=await asyncio.shield(opening)
+        session=self.sessions[target_id]
         start=time.perf_counter()
-        request=InvocationRequest(target_id=self.target_id,tool_name=name,args=args,uid=self.uid,
-            call_id=uuid.uuid4().hex,session=self.session,timeout=self.timeout,run_id=self.recorder.request_id)
+        request=InvocationRequest(target_id=target_id,tool_name=name,args=args,uid=self.uid,
+            call_id=uuid.uuid4().hex,session=session,timeout=self.timeout,run_id=self.recorder.request_id)
         self.recorder.emit('tool_start',key=key,tool_name=name,args=args,wave=wave,call_id=request.call_id,
-            runtime_uid=self.uid,target_id=self.target_id,provider_session_id=self.session.provider_session_id)
+            runtime_uid=self.uid,target_id=target_id,provider_session_id=session.provider_session_id)
         async def invoke():
             try:
                 response=await asyncio.to_thread(self.adapter.invoke,request)
@@ -108,25 +127,36 @@ class ToolClient:
             if result.get('execution_environment',{}).get('implementation_sha256')!=self.expected_impl:
                 raise DivergenceError('Remote Tool code does not match the audited deployment image')
         structured_failure=isinstance(result,dict) and result.get('status') in {'error','timeout'} and result.get('error_type')
-        if response.status!='ok' and not structured_failure:raise RuntimeError(f'Tool transport {response.status}: {response.error}')
         if self.replay:
             compare=self.calibration_view if self.calibration else self.comparable
-            if compare(semantic(result))!=compare(semantic(expected['result'])):
-                self.recorder.emit('divergence',key=key,expected=semantic(expected['result']),actual=semantic(result))
+            if not self.result_equal(compare(self.result_view(result)),compare(self.result_view(expected['result']))):
+                self.recorder.emit('divergence',key=key,expected=self.result_view(expected['result']),actual=self.result_view(result))
                 raise DivergenceError('Actual Tool output incompatible with Capture: '+key)
-            if semantic(result)!=semantic(expected['result']):
-                if self.calibration:self.recorder.emit('environment_reference_difference',key=key,expected=semantic(expected['result']),actual=semantic(result))
+            if self.result_view(result)!=self.result_view(expected['result']):
+                if self.calibration:self.recorder.emit('environment_reference_difference',key=key,expected=self.result_view(expected['result']),actual=self.result_view(result))
                 else:self.recorder.emit('calibrated_rendering_equivalence',key=key,policy=self.renderings)
             self.consumed.add(key)
+        if response.status!='ok' and not structured_failure:raise ToolExecutionError(f'Tool transport {response.status}: {response.error}')
         return result
 
     def close(self):
-        self.adapter.close_session(self.session)
-        if hasattr(self.adapter,'close'):self.adapter.close()
+        with ExitStack() as stack:
+            if hasattr(self.adapter,'close'):stack.callback(self.adapter.close)
+            receipts=self.adapter.cleanup_run(self.uid)
+        self.recorder.emit('tool_sessions_closed',uid=self.uid,target_ids=list(self.sessions),
+                           receipts=receipts if isinstance(receipts,list) else [])
+        self.sessions.clear()
 
     async def aclose(self):
-        if self.rpc_tasks:await asyncio.gather(*self.rpc_tasks,return_exceptions=True)
-        self.close()
+        async def finish():
+            if self.rpc_tasks:await asyncio.gather(*self.rpc_tasks,return_exceptions=True)
+            await asyncio.to_thread(self.close)
+        closing=asyncio.create_task(finish());cancelled=None
+        while not closing.done():
+            try:await asyncio.shield(closing)
+            except asyncio.CancelledError as exc:cancelled=exc
+        closing.result()
+        if cancelled is not None:raise cancelled
 
     def assert_consumed(self):
         if self.replay and self.consumed!=set(self.expected):raise DivergenceError('Replay did not execute every captured Tool call')

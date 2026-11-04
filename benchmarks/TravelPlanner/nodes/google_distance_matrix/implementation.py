@@ -138,7 +138,7 @@ class GoogleDistanceMatrix:
 google_distance_matrix = GoogleDistanceMatrix()
 
 @registry.tool()
-def googledistancematrix_run(origin, destination, mode='driving'):
+def googledistancematrix_run(origin: str, destination: str, mode: str = 'driving'):
     """Get distance matrix information from origin to destination."""
     return google_distance_matrix.run(origin, destination, mode)
 

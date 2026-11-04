@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -24,6 +25,8 @@ class ClaudeCodeReviewState:
         if self._candidate_data_dirs_override is not None:
             return list(self._candidate_data_dirs_override)
         candidates = [self._module_dir / "data"]
+        if os.getenv("ATSUITE_DATA_PATH"):
+            candidates.insert(0, Path(os.environ["ATSUITE_DATA_PATH"]))
         if len(self._module_dir.parents) > 1:
             candidates.append(self._module_dir.parents[1] / "data")
         return candidates
@@ -84,5 +87,4 @@ class ClaudeCodeReviewState:
 # The module name is intentionally identical in both node directories.
 # MCP loading reuses the first-imported module via sys.modules, while FaaS
 # targets still load their local copy in separate processes.
-CLAUDE_CODE_REVIEW_STATE = ClaudeCodeReviewState()
-register_state_object("claude_code_review_state", CLAUDE_CODE_REVIEW_STATE)
+CLAUDE_CODE_REVIEW_STATE = register_state_object("claude_code_review_state", ClaudeCodeReviewState(), session_scoped=True)

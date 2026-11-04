@@ -70,3 +70,7 @@ uv run python -m tools.invoker \
 ## Claude Code Capture Flow
 
 The previous local capture flow depended on the removed local runtime and trace-catcher module. Keep newly captured traces in `trace/` and replay them through the supported ATSuite providers.
+
+## E3 real-project fixtures
+
+E3 adds pinned Requests, Click and ItsDangerous repositories with explicitly injected regression PRs, independent base/head checks and per-request repository selection. See [E3 instructions](../../experiments/e3/README.md) and [validation](../../experiments/e3/VALIDATION.md). The injected PRs are not attributed to upstream maintainers.

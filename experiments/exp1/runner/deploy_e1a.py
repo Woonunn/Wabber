@@ -132,20 +132,22 @@ def agentcore_usage_delivery(runtime_arn, runtime_id, region):
     return {'log_group':group,'source':name,'destination_arn':destination,'delivery_id':delivery['id'],'retention_days':7}
 
 
-def configure(provider, config_path, *, push_image=True):
+def configure(provider, config_path, *, push_image=True, environment=None, concurrency_limit=64):
+    if type(concurrency_limit) is not int or concurrency_limit < 1:
+        raise ValueError('A positive integer concurrency limit is required')
     resolved=resolve_benchmark(config_path,provider);target=next(iter(resolved.targets.values()));name=normalize_node_name(target.name)
-    bucket=state_bucket_for_provider(provider);common={'PROJECT':bucket}
+    bucket=state_bucket_for_provider(provider);common={'PROJECT':bucket,**(environment or {})}
     if provider=='aws_lambda':
         from atsuite.aws.aws import AWS
         api=AWS().get_lambda_client();current=api.get_function_configuration(FunctionName=name)
         api.update_function_configuration(FunctionName=name,Environment={'Variables':{**current.get('Environment',{}).get('Variables',{}),**common}})
         api.get_waiter('function_updated_v2').wait(FunctionName=name)
-        api.put_function_concurrency(FunctionName=name,ReservedConcurrentExecutions=64)
+        api.put_function_concurrency(FunctionName=name,ReservedConcurrentExecutions=concurrency_limit)
         response=api.get_function_configuration(FunctionName=name)
         return {'region':api.meta.region_name,'runtime_name':name,'function_arn':response['FunctionArn'],
                 'memory_mb':response['MemorySize'],'cpu_policy':'Lambda CPU scales with memory; requested CPU is not an independently enforceable setting',
                 'ephemeral_storage':response.get('EphemeralStorage'),'timeout_s':response['Timeout'],'architectures':response.get('Architectures'),
-                'reserved_concurrency':64,'instance_concurrency':1,'state_bucket':bucket,'warmup':'none','environment_keys':list(response.get('Environment',{}).get('Variables',{}))}
+                'reserved_concurrency':concurrency_limit,'instance_concurrency':1,'state_bucket':bucket,'warmup':'none','environment_keys':list(response.get('Environment',{}).get('Variables',{}))}
     if provider=='aws_agentcore':
         from atsuite.aws.aws import AWS
         api=AWS().get_agentcore_client();runtime_name='atsuite_'+name.lower().replace('-','_')
@@ -189,7 +191,7 @@ def configure(provider, config_path, *, push_image=True):
             session_affinity_config=json.dumps({'sessionConcurrencyPerInstance':1,'SessionTTLInSeconds':900,'SessionIdleTimeoutInSeconds':60}))
     api.update_function(function,models.UpdateFunctionRequest(body=models.UpdateFunctionInput(**kwargs)))
     api.put_scaling_config(function,models.PutScalingConfigRequest(body=models.PutScalingConfigInput(min_instances=0)))
-    api.put_concurrency_config(function,models.PutConcurrencyConfigRequest(body=models.PutConcurrencyInput(reserved_concurrency=64)))
+    api.put_concurrency_config(function,models.PutConcurrencyConfigRequest(body=models.PutConcurrencyInput(reserved_concurrency=concurrency_limit)))
     deadline=time.monotonic()+300
     while True:
         value=api.get_function(function,models.GetFunctionRequest()).body
@@ -199,7 +201,7 @@ def configure(provider, config_path, *, push_image=True):
     return {'region':os.environ['ALI_REGION'],'runtime_name':function,'cpu':value.cpu,'memory_mb':value.memory_size,
             'disk_mb':value.disk_size,'timeout_s':value.timeout,'instance_concurrency':value.instance_concurrency,
             'session_affinity':value.session_affinity,'session_affinity_config':value.session_affinity_config,
-            'instance_isolation_mode':value.instance_isolation_mode,'reserved_request_concurrency':64,'min_instances':0,
+            'instance_isolation_mode':value.instance_isolation_mode,'reserved_request_concurrency':concurrency_limit,'min_instances':0,
             'state_bucket':bucket,'state_transport':'same-region OSS internal endpoint','warmup':'none','image':value.custom_container_config.image,'resolved_image_uri':value.custom_container_config.resolved_image_uri,
             'note':'ali_agentrun uses the existing ATSuite FC session-exclusive MCP adapter; it is not a separate AgentRun API deployment'}
 

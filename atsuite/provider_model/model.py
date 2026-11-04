@@ -30,12 +30,7 @@ def _distribution(values: list[float], total: int) -> dict:
     position = (len(values) - 1) * 0.95
     lo = int(position)
     result["p95"] = (
-        (
-            values[lo]
-            + (values[min(lo + 1, len(values) - 1)] - values[lo]) * (position - lo)
-        )
-        if values
-        else None
+        (values[lo] + (values[min(lo + 1, len(values) - 1)] - values[lo]) * (position - lo)) if values else None
     )
     return result
 
@@ -84,9 +79,7 @@ def _nearest(rows: list[dict], query: dict, neighbors: int) -> tuple[list[dict],
                 continue
             extent = ranges[key]
             scale = max(1.0, math.log1p(extent["max"]) - math.log1p(extent["min"]))
-            parts.append(
-                ((math.log1p(vector[key]) - math.log1p(query[key])) / scale) ** 2
-            )
+            parts.append(((math.log1p(vector[key]) - math.log1p(query[key])) / scale) ** 2)
         return sum(parts) / len(parts) if parts else 0
 
     ranked = sorted(
@@ -107,13 +100,15 @@ def target_confidence(coverage, unique_count, *, required, minimum, marginal=Fal
     Retain sample, required-feature coverage and observed-support checks. An
     unmeasured optional feature is disclosed, never assigned a fabricated value.
     """
-    missing = sorted({k for c in coverage for k in c["missing_features"] if k in required}
-                     | {k for c in coverage for k, v in c["feature_ranges"].items()
-                        if k in required and v["coverage"] < 1})
+    missing = sorted(
+        {k for c in coverage for k in c["missing_features"] if k in required}
+        | {k for c in coverage for k, v in c["feature_ranges"].items() if k in required and v["coverage"] < 1}
+    )
     outside = sorted({k for c in coverage for k in c["extrapolated_features"]})
-    optional = sorted({k for c in coverage for k in c["missing_features"] if k not in required}
-                      | {k for c in coverage for k, v in c["feature_ranges"].items()
-                         if k not in required and v["coverage"] < 1})
+    optional = sorted(
+        {k for c in coverage for k in c["missing_features"] if k not in required}
+        | {k for c in coverage for k, v in c["feature_ranges"].items() if k not in required and v["coverage"] < 1}
+    )
     reasons = []
     if not coverage or unique_count < minimum:
         reasons.append("sample_insufficient")
@@ -123,23 +118,24 @@ def target_confidence(coverage, unique_count, *, required, minimum, marginal=Fal
         reasons.append("distribution_outside_support")
     if marginal:
         reasons.append("joint_profile_missing")
-    return {"reliable": not reasons, "reasons": reasons, "required_metrics": sorted(required),
-            "missing_metrics": missing, "optional_missing": optional,
-            "outside_support": outside, "unique_samples": unique_count, "minimum_samples": minimum}
+    return {
+        "reliable": not reasons,
+        "reasons": reasons,
+        "required_metrics": sorted(required),
+        "missing_metrics": missing,
+        "optional_missing": optional,
+        "outside_support": outside,
+        "unique_samples": unique_count,
+        "minimum_samples": minimum,
+    }
 
 
-def _target_profiles(
-    profiles: list[dict], pool: dict, rows: list[dict], neighbors: int
-) -> list[dict]:
+def _target_profiles(profiles: list[dict], pool: dict, rows: list[dict], neighbors: int) -> list[dict]:
     """Use target-native resource peers when a foreign profile has no shared baseline."""
     context = execution_context(pool)
     result, substituted = [], set()
     for profile in profiles:
-        if (
-            profile.get("reference_id")
-            or profile.get("execution_pool") == context
-            or not profile.get("descriptor")
-        ):
+        if profile.get("reference_id") or profile.get("execution_pool") == context or not profile.get("descriptor"):
             result.append(profile)
             continue
         peers = sorted(
@@ -173,14 +169,13 @@ class ProviderModel:
     without becoming visible to predictions made before that evidence arrived.
     """
 
-    def __init__(self, neighbors: int = 20, *, tariffs: dict | None = None) -> None:
-        if (
-            isinstance(neighbors, bool)
-            or not isinstance(neighbors, int)
-            or neighbors < 1
-        ):
+    def __init__(self, neighbors: int = 20, *, tariffs: dict | None = None, minimum_samples: int = 20) -> None:
+        if isinstance(neighbors, bool) or not isinstance(neighbors, int) or neighbors < 1:
             raise ValueError("neighbors must be a positive integer")
         self.neighbors = neighbors
+        if type(minimum_samples) is not int or minimum_samples < 1:
+            raise ValueError("minimum_samples must be a positive integer")
+        self.minimum_samples = minimum_samples
         self.tariffs = copy.deepcopy(tariffs or {})
         for provider, card in self.tariffs.items():
             validate_tariff(card, provider)
@@ -213,9 +208,7 @@ class ProviderModel:
                     if field in history[-1]:
                         value = history[-1][field]
                         if row.get(field, value) != value:
-                            raise ValueError(
-                                f"Revision changes request context: {field}"
-                            )
+                            raise ValueError(f"Revision changes request context: {field}")
                         row[field] = value
             if row in history:
                 return
@@ -232,9 +225,7 @@ class ProviderModel:
                     "status",
                 ):
                     if row[field] != previous[field]:
-                        raise ValueError(
-                            f"Revision changes request identity/context: {field}"
-                        )
+                        raise ValueError(f"Revision changes request identity/context: {field}")
             history.append(row)
 
     def observe(
@@ -273,9 +264,7 @@ class ProviderModel:
         profile = extract_profile(trace)
         profile["execution_pool"] = execution_context(pool)
         if reference_profile is not None and not reference_profile.get("reference_id"):
-            raise ValueError(
-                "An explicit reference profile requires its shared reference_id"
-            )
+            raise ValueError("An explicit reference profile requires its shared reference_id")
         row = {
             "kind": "request",
             "id": profile["request_id"],
@@ -309,12 +298,7 @@ class ProviderModel:
         request costs. All output costs are forecasts, including invoice-trained ones.
         """
         as_of_ns = time.time_ns() if as_of_ns is None else as_of_ns
-        if (
-            not number(as_of_ns)
-            or not number(load_rps)
-            or not number(horizon_s)
-            or horizon_s == 0
-        ):
+        if not number(as_of_ns) or not number(load_rps) or not number(horizon_s) or horizon_s == 0:
             raise ValueError("Invalid prediction time, load or horizon")
         marginal = False
         if isinstance(workload, list):
@@ -325,9 +309,7 @@ class ProviderModel:
             marginal = True
             profiles = [
                 {
-                    "metrics": {
-                        k: v.get("mean") for k, v in workload["metrics"].items()
-                    },
+                    "metrics": {k: v.get("mean") for k, v in workload["metrics"].items()},
                     "workflow": {},
                 }
             ]
@@ -342,25 +324,14 @@ class ProviderModel:
         results = []
         for pool in pools:
             validate_pool(pool)
-            candidates = [
-                r
-                for r in visible
-                if _compatible(r["pool"], pool) and not r.get("capacity_transition")
-            ]
-            descriptors = [
-                p["descriptor"]
-                for p in profiles
-                if (p.get("descriptor") or {}).get("semantic")
-            ]
+            candidates = [r for r in visible if _compatible(r["pool"], pool) and not r.get("capacity_transition")]
+            descriptors = [p["descriptor"] for p in profiles if (p.get("descriptor") or {}).get("semantic")]
             if descriptors:
                 candidates = [
                     r
                     for r in candidates
                     if r["profile"].get("descriptor")
-                    and any(
-                        distance(d, r["profile"]["descriptor"]) <= 0.5
-                        for d in descriptors
-                    )
+                    and any(distance(d, r["profile"]["descriptor"]) <= 0.5 for d in descriptors)
                 ]
             requests = [r for r in candidates if r["kind"] == "request"]
             successes = [r for r in requests if r["status"] == "success"]
@@ -369,10 +340,7 @@ class ProviderModel:
             # Identical resource queries keep their mixture weight without repeating neighbor searches.
             query_keys = [json.dumps(q, sort_keys=True) for q in queries]
             unique_queries = dict(zip(query_keys, queries))
-            neighbors = {
-                k: _nearest(successes, q, self.neighbors)
-                for k, q in unique_queries.items()
-            }
+            neighbors = {k: _nearest(successes, q, self.neighbors) for k, q in unique_queries.items()}
             selected, coverage = [], []
             for key in query_keys:
                 rows, info = neighbors[key]
@@ -380,21 +348,14 @@ class ProviderModel:
                 coverage.append(info)
             metrics = {
                 key: _distribution(
-                    [
-                        r["measurements"][key]
-                        for r in selected
-                        if number(r.get("measurements", {}).get(key))
-                    ],
+                    [r["measurements"][key] for r in selected if number(r.get("measurements", {}).get(key))],
                     len(selected),
                 )
                 for key in MEASUREMENTS
             }
             capacity = self._capacity(pool, load_rps, metrics["service_slot_s"])
             windows = [r for r in candidates if r["kind"] == "window"]
-            window_neighbors = {
-                k: _nearest(windows, q, self.neighbors)[0]
-                for k, q in unique_queries.items()
-            }
+            window_neighbors = {k: _nearest(windows, q, self.neighbors)[0] for k, q in unique_queries.items()}
             window_samples = [r for key in query_keys for r in window_neighbors[key]]
             capacity["observed_goodput_rps"] = _distribution(
                 [
@@ -429,13 +390,9 @@ class ProviderModel:
                     for r in candidates
                     if r["kind"] == kind
                     and r.get("cost")
-                    and (r["cost"]["scope"], r["cost"]["basis"], r["cost"]["complete"])
-                    == (scope, basis, complete)
+                    and (r["cost"]["scope"], r["cost"]["basis"], r["cost"]["complete"]) == (scope, basis, complete)
                 ]
-                cost_neighbors = {
-                    k: _nearest(source, q, self.neighbors)
-                    for k, q in unique_queries.items()
-                }
+                cost_neighbors = {k: _nearest(source, q, self.neighbors) for k, q in unique_queries.items()}
                 chosen, cost_coverage = [], []
                 for key in query_keys:
                     rows, info = cost_neighbors[key]
@@ -444,11 +401,7 @@ class ProviderModel:
                 values = []
                 components = {}
                 for row in chosen:
-                    scale = (
-                        horizon_s / ((row["completed_ns"] - row["arrival_ns"]) / 1e9)
-                        if kind == "window"
-                        else 1
-                    )
+                    scale = horizon_s / ((row["completed_ns"] - row["arrival_ns"]) / 1e9) if kind == "window" else 1
                     values.append(sum(row["cost"]["components"].values()) * scale)
                     for category, value in row["cost"]["components"].items():
                         components.setdefault(category, []).append(value * scale)
@@ -461,13 +414,8 @@ class ProviderModel:
                         "training_basis": basis,
                         "complete": complete,
                         "subtotal": _distribution(values, len(chosen)),
-                        "total": _distribution(values, len(chosen))
-                        if complete
-                        else None,
-                        "components": {
-                            k: _distribution(v, len(chosen))
-                            for k, v in components.items()
-                        },
+                        "total": _distribution(values, len(chosen)) if complete else None,
+                        "components": {k: _distribution(v, len(chosen)) for k, v in components.items()},
                         "coverage": cost_coverage,
                         "source_count": len(source),
                         "note": "Inclusive pool window; stationary rate scaled to horizon; do not add request costs"
@@ -480,9 +428,7 @@ class ProviderModel:
                     cost_profiles,
                     pool,
                     card,
-                    sorted(successes, key=lambda r: r["completed_ns"])[
-                        -self.neighbors :
-                    ],
+                    sorted(successes, key=lambda r: r["completed_ns"])[-self.neighbors :],
                 )
                 if card
                 else None
@@ -492,27 +438,29 @@ class ProviderModel:
                 # Native Session durations already include their observed waiting time.
                 queue = (
                     [0.0]
-                    if all(
-                        s["timing_basis"] == "target_native"
-                        for s in analytical["resource_samples"]
-                    )
+                    if all(s["timing_basis"] == "target_native" for s in analytical["resource_samples"])
                     else metrics["queue_s"]["samples"] or [0.0]
                 )
-                latency = [
-                    v + q for v in analytical["latency"]["samples"] for q in queue
-                ]
+                latency = [v + q for v in analytical["latency"]["samples"] for q in queue]
                 metrics["latency_s"] = _distribution(latency, len(latency))
             unique_count = len({r["id"] for r in selected})
-            minimum = 3 if analytical else 20
+            minimum = 3 if analytical else self.minimum_samples
             latency_confidence = target_confidence(
-                coverage, unique_count, required={"tool_elapsed_s", "llm_idle_s", "parallel_peak", "load_rps"},
-                minimum=minimum, marginal=marginal,
+                coverage,
+                unique_count,
+                required={"tool_elapsed_s", "llm_idle_s", "parallel_peak", "load_rps"},
+                minimum=minimum,
+                marginal=marginal,
             )
             cost_required = {"tool_elapsed_s", "parallel_peak", "load_rps"}
             if card and card["cpu_basis"] == "active" and card["rates"]["cpu_s"]:
                 cost_required.add("tool_cpu_s")
             cost_confidence = target_confidence(
-                coverage, unique_count, required=cost_required, minimum=minimum, marginal=marginal,
+                coverage,
+                unique_count,
+                required=cost_required,
+                minimum=minimum,
+                marginal=marginal,
             )
             cost_confidence["missing_cost_evidence"] = analytical["missing"] if analytical else []
             if analytical and (not analytical["complete"] or not analytical["calibrated"]):
@@ -543,9 +491,7 @@ class ProviderModel:
                     "confidence": {"latency": latency_confidence, "cost": cost_confidence},
                     "low_confidence": not (latency_confidence["reliable"] and cost_confidence["reliable"]),
                     "latency_scope": "successful requests, observed queue/cold-start mixture; no additive p95",
-                    "cost_missing": not analytical["complete"]
-                    if analytical
-                    else not costs,
+                    "cost_missing": not analytical["complete"] if analytical else not costs,
                 }
             )
         return {
@@ -560,39 +506,21 @@ class ProviderModel:
     @staticmethod
     def _capacity(pool: dict, load: float, service: dict) -> dict:
         coupled = BACKENDS[pool["provider"]][0] == "state-coupled"
-        concurrency = pool.get(
-            "sessions_per_instance" if coupled else "invocations_per_instance"
-        )
+        concurrency = pool.get("sessions_per_instance" if coupled else "invocations_per_instance")
         instances = pool.get("instances")
-        slots = (
-            instances * concurrency
-            if instances is not None and concurrency is not None
-            else None
-        )
+        slots = instances * concurrency if instances is not None and concurrency is not None else None
         mean = service["mean"]
-        rate = (
-            slots / mean
-            if slots is not None and mean is not None and mean > 0
-            else None
-        )
+        rate = slots / mean if slots is not None and mean is not None and mean > 0 else None
         if slots == 0:
             rate = 0
-        utilization = (
-            load / rate
-            if rate and rate > 0
-            else (0 if load == 0 and rate == 0 else None)
-        )
+        utilization = load / rate if rate and rate > 0 else (0 if load == 0 and rate == 0 else None)
         return {
             "slots": slots,
             "service_slot_s": service,
             "max_service_rps": rate,
             "effective_rps": min(load, rate) if rate is not None else None,
             "utilization": utilization,
-            "insufficient": load >= rate
-            if rate is not None and load > 0
-            else False
-            if rate is not None
-            else None,
+            "insufficient": load >= rate if rate is not None and load > 0 else False if rate is not None else None,
             "basis": "slot-work conservation bound, not a queueing SLA",
             "missing": [
                 k
@@ -615,10 +543,9 @@ class ProviderModel:
                 {
                     "schema_version": 1,
                     "neighbors": self.neighbors,
+                    "minimum_samples": self.minimum_samples,
                     "tariffs": self.tariffs,
-                    "observations": [
-                        r for history in self.samples.values() for r in history
-                    ],
+                    "observations": [r for history in self.samples.values() for r in history],
                 },
             )
 
@@ -628,7 +555,9 @@ class ProviderModel:
         payload = json.loads(read_text(Path(path)))
         if payload.get("schema_version") != 1:
             raise ValueError("Unsupported provider model schema")
-        model = cls(payload["neighbors"], tariffs=payload.get("tariffs"))
+        model = cls(
+            payload["neighbors"], tariffs=payload.get("tariffs"), minimum_samples=payload.get("minimum_samples", 20)
+        )
         for row in payload["observations"]:
             model.update(row)
         return model

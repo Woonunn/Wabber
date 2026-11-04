@@ -20,12 +20,22 @@ from tests.test_workload import trace
 
 
 def router_fixture(
-    *, strategy="contextual", epsilon=1, budget=10, exploration_budget=3
+    *,
+    strategy="contextual",
+    epsilon=1,
+    budget=10,
+    exploration_budget=3,
+    promising_rate=0.0022,
 ):
     descriptor = describe(prompt="Calculate mean and variance", tools=["python"])
     workload, provider = WorkloadModel(), ProviderModel()
     pools = {}
-    for name, rate in (("known", 0.002), ("promising", 0.001), ("expensive", 0.1)):
+    # Exploration tests need an optimistic alternative, not an already-cheaper excluded incumbent.
+    for name, rate in (
+        ("known", 0.002),
+        ("promising", promising_rate),
+        ("expensive", 0.1),
+    ):
         pools[name] = {**pool(), "environment": name, "billing": tariff()}
         pools[name]["billing"]["rates"]["memory_gb_s"] = rate
     for i in range(3):
@@ -240,7 +250,7 @@ class ExplorationTests(unittest.TestCase):
         from atsuite.routing import Capacity
 
         control, _ = controller(policy="routing")
-        router, d = router_fixture(epsilon=0)
+        router, d = router_fixture(epsilon=0, promising_rate=0.001)
         control.router = router
         for i in range(3):
             row = observation(i)
@@ -274,7 +284,7 @@ class ExplorationTests(unittest.TestCase):
         )
 
     def test_dominated_pool_stops_receiving_contextual_probability(self):
-        router, d = router_fixture()
+        router, d = router_fixture(promising_rate=0.001)
         for i in range(20):
             row = observation(i)
             row.update(id=f"evidence-{i}", pool=router.pools["promising"])

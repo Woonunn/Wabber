@@ -1,0 +1,656 @@
+{
+  "name": "DataSciBench LangGraph",
+  "discription": "Capture partial-order ATG; use LangGraph replay for output consistency enforcement",
+  "deploy_config": "",
+  "nodes": [
+    {
+      "id": 0,
+      "name": "start",
+      "type": "start",
+      "edge_to": [
+        {
+          "id": 1,
+          "params": {
+            "input": {
+              "model": "deepseek-flash",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "Return only one valid JSON object. To call a tool, use keys tool (a tool name) and args (an object). To finish, use only the key answer (an object). Do not emit Markdown or placeholder values. Solve the scientific problem with the supplied tools. Retain and reuse tensors. Report {\"solution_tensor\":\"stored name\", \"solution\":[[...],...]} as answer.\nCall exactly one tool per response. Example: {\"tool\":\"scicom_add_matrices\",\"args\":{}}.\nAvailable tool definitions: [{\"description\": \"No description provided.\", \"name\": \"scicom_add_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_add_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_change_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_basis\": {\"items\": {\"items\": {\"type\": \"number\"}, \"type\": \"array\"}, \"title\": \"New Basis\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_basis\"], \"title\": \"scicom_change_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_compute_eigen\", \"parameters\": {\"properties\": {\"eigenvalues_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvalues Output Name\"}, \"eigenvectors_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvectors Output Name\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_compute_eigen_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_create_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"shape\": {\"items\": {\"type\": \"integer\"}, \"title\": \"Shape\", \"type\": \"array\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"values\": {\"items\": {\"type\": \"number\"}, \"title\": \"Values\", \"type\": \"array\"}}, \"required\": [\"shape\", \"values\", \"name\"], \"title\": \"scicom_create_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_delete_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_delete_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_determinant\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_determinant_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_find_orthonormal_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_find_orthonormal_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_list_tensor_names\", \"parameters\": {\"properties\": {\"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"title\": \"scicom_list_tensor_names_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_matrix_inverse\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_matrix_inverse_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_multiply_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_multiply_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_qr_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"q_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Q Output Name\"}, \"r_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"R Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_qr_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_rank\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_rank_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_scale_matrix\", \"parameters\": {\"properties\": {\"in_place\": {\"default\": true, \"title\": \"In Place\", \"type\": \"boolean\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"scale_factor\": {\"title\": \"Scale Factor\", \"type\": \"number\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"scale_factor\"], \"title\": \"scicom_scale_matrix_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_subtract_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_subtract_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_svd_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"s_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"S Output Name\"}, \"u_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"U Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"v_t_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"V T Output Name\"}}, \"required\": [\"name\"], \"title\": \"scicom_svd_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_transpose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_transpose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_cross_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_cross_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_dot_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_dot_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_project\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_vector\": {\"items\": {\"type\": \"number\"}, \"title\": \"New Vector\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_vector\"], \"title\": \"scicom_vector_project_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_view_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_view_tensor_Args\", \"type\": \"object\"}}]"
+                },
+                {
+                  "role": "user",
+                  "content": "Solve the regularized normal equations A X = B for 1 response vectors. Create A and B in the tensor workspace, reuse A inverse across response vectors, store the solution tensor and report its numeric values. {\"A\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \"B\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]]}"
+                }
+              ],
+              "response_format": {
+                "type": "json_object"
+              },
+              "temperature": 0,
+              "top_p": 1,
+              "max_tokens": 12000,
+              "extra_body": {
+                "thinking": {
+                  "type": "disabled"
+                }
+              }
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 0,
+      "output": null
+    },
+    {
+      "id": 1,
+      "name": "ACT",
+      "type": "llm",
+      "edge_to": [
+        {
+          "id": 2,
+          "params": {
+            "input": {
+              "name": "A",
+              "shape": [
+                8,
+                8
+              ],
+              "values": [
+                14.6524715367233,
+                4.311829157625619,
+                2.9656632297843695,
+                -1.3086375309359881,
+                6.022699172760985,
+                2.253702850826244,
+                1.1724379756895225,
+                0.3139859550743427,
+                4.311829157625619,
+                23.114006754253104,
+                4.370239407791377,
+                2.9619961871430234,
+                7.833389139522949,
+                -0.5895449890199894,
+                -3.645256088800175,
+                -2.7401053706555962,
+                2.9656632297843695,
+                4.370239407791377,
+                15.620577613756467,
+                1.7013610296915493,
+                4.326295596780325,
+                2.2182204391678746,
+                0.7202933707851735,
+                -1.8510241567155454,
+                -1.3086375309359881,
+                2.9619961871430234,
+                1.7013610296915493,
+                12.479405625122691,
+                2.586603569204897,
+                -1.056020318374333,
+                -4.285891277404788,
+                -4.145100098964917,
+                6.022699172760985,
+                7.833389139522949,
+                4.326295596780325,
+                2.586603569204897,
+                21.268808571053366,
+                -0.9979776158158234,
+                -3.598981366091503,
+                0.6817353653666159,
+                2.253702850826244,
+                -0.5895449890199894,
+                2.2182204391678746,
+                -1.056020318374333,
+                -0.9979776158158234,
+                15.51878911681803,
+                -3.8230701074960134,
+                -1.3897913165604525,
+                1.1724379756895225,
+                -3.645256088800175,
+                0.7202933707851735,
+                -4.285891277404788,
+                -3.598981366091503,
+                -3.8230701074960134,
+                25.31712528772318,
+                3.7007588651288574,
+                0.3139859550743427,
+                -2.7401053706555962,
+                -1.8510241567155454,
+                -4.145100098964917,
+                0.6817353653666159,
+                -1.3897913165604525,
+                3.7007588651288574,
+                16.93852081570122
+              ]
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 3245.8175600040704,
+      "output": {
+        "id": "17a15da3-52fc-4a9e-b53e-0acf9f748793",
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": "{\"tool\":\"scicom_create_tensor\",\"args\":{\"name\":\"A\",\"shape\":[8,8],\"values\":[14.6524715367233,4.311829157625619,2.9656632297843695,-1.3086375309359881,6.022699172760985,2.253702850826244,1.1724379756895225,0.3139859550743427,4.311829157625619,23.114006754253104,4.370239407791377,2.9619961871430234,7.833389139522949,-0.5895449890199894,-3.645256088800175,-2.7401053706555962,2.9656632297843695,4.370239407791377,15.620577613756467,1.7013610296915493,4.326295596780325,2.2182204391678746,0.7202933707851735,-1.8510241567155454,-1.3086375309359881,2.9619961871430234,1.7013610296915493,12.479405625122691,2.586603569204897,-1.056020318374333,-4.285891277404788,-4.145100098964917,6.022699172760985,7.833389139522949,4.326295596780325,2.586603569204897,21.268808571053366,-0.9979776158158234,-3.598981366091503,0.6817353653666159,2.253702850826244,-0.5895449890199894,2.2182204391678746,-1.056020318374333,-0.9979776158158234,15.51878911681803,-3.8230701074960134,-1.3897913165604525,1.1724379756895225,-3.645256088800175,0.7202933707851735,-4.285891277404788,-3.598981366091503,-3.8230701074960134,25.31712528772318,3.7007588651288574,0.3139859550743427,-2.7401053706555962,-1.8510241567155454,-4.145100098964917,0.6817353653666159,-1.3897913165604525,3.7007588651288574,16.93852081570122]}}",
+              "refusal": null,
+              "role": "assistant",
+              "annotations": null,
+              "audio": null,
+              "function_call": null,
+              "tool_calls": null
+            }
+          }
+        ],
+        "created": 1793686392,
+        "model": "deepseek-flash",
+        "object": "chat.completion",
+        "service_tier": null,
+        "system_fingerprint": "bc19ba97cbe016479903222bb1578db6",
+        "usage": {
+          "completion_tokens": 568,
+          "prompt_tokens": 3735,
+          "total_tokens": 4303,
+          "completion_tokens_details": null,
+          "prompt_tokens_details": {
+            "audio_tokens": null,
+            "cached_tokens": 0
+          },
+          "prompt_cache_hit_tokens": 0,
+          "prompt_cache_miss_tokens": 3735
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "scicom_create_tensor",
+      "type": "tool_use",
+      "edge_to": [
+        {
+          "id": 3,
+          "params": {
+            "input": {
+              "model": "deepseek-flash",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "Return only one valid JSON object. To call a tool, use keys tool (a tool name) and args (an object). To finish, use only the key answer (an object). Do not emit Markdown or placeholder values. Solve the scientific problem with the supplied tools. Retain and reuse tensors. Report {\"solution_tensor\":\"stored name\", \"solution\":[[...],...]} as answer.\nCall exactly one tool per response. Example: {\"tool\":\"scicom_add_matrices\",\"args\":{}}.\nAvailable tool definitions: [{\"description\": \"No description provided.\", \"name\": \"scicom_add_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_add_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_change_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_basis\": {\"items\": {\"items\": {\"type\": \"number\"}, \"type\": \"array\"}, \"title\": \"New Basis\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_basis\"], \"title\": \"scicom_change_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_compute_eigen\", \"parameters\": {\"properties\": {\"eigenvalues_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvalues Output Name\"}, \"eigenvectors_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvectors Output Name\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_compute_eigen_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_create_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"shape\": {\"items\": {\"type\": \"integer\"}, \"title\": \"Shape\", \"type\": \"array\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"values\": {\"items\": {\"type\": \"number\"}, \"title\": \"Values\", \"type\": \"array\"}}, \"required\": [\"shape\", \"values\", \"name\"], \"title\": \"scicom_create_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_delete_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_delete_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_determinant\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_determinant_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_find_orthonormal_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_find_orthonormal_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_list_tensor_names\", \"parameters\": {\"properties\": {\"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"title\": \"scicom_list_tensor_names_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_matrix_inverse\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_matrix_inverse_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_multiply_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_multiply_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_qr_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"q_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Q Output Name\"}, \"r_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"R Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_qr_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_rank\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_rank_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_scale_matrix\", \"parameters\": {\"properties\": {\"in_place\": {\"default\": true, \"title\": \"In Place\", \"type\": \"boolean\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"scale_factor\": {\"title\": \"Scale Factor\", \"type\": \"number\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"scale_factor\"], \"title\": \"scicom_scale_matrix_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_subtract_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_subtract_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_svd_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"s_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"S Output Name\"}, \"u_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"U Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"v_t_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"V T Output Name\"}}, \"required\": [\"name\"], \"title\": \"scicom_svd_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_transpose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_transpose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_cross_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_cross_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_dot_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_dot_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_project\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_vector\": {\"items\": {\"type\": \"number\"}, \"title\": \"New Vector\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_vector\"], \"title\": \"scicom_vector_project_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_view_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_view_tensor_Args\", \"type\": \"object\"}}]"
+                },
+                {
+                  "role": "user",
+                  "content": "Solve the regularized normal equations A X = B for 1 response vectors. Create A and B in the tensor workspace, reuse A inverse across response vectors, store the solution tensor and report its numeric values. {\"A\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \"B\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]]}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"A\", \"shape\": [8, 8], \"values\": [14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427, 4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962, 2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454, -1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917, 6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159, 2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525, 1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574, 0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]}, \"tool\": \"scicom_create_tensor\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \\\"tensor_name\\\": \\\"A\\\"}\"}"
+                }
+              ],
+              "response_format": {
+                "type": "json_object"
+              },
+              "temperature": 0,
+              "top_p": 1,
+              "max_tokens": 12000,
+              "extra_body": {
+                "thinking": {
+                  "type": "disabled"
+                }
+              }
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 149.3999469676055,
+      "output": "{\"isError\": false, \"result\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \"tensor_name\": \"A\"}"
+    },
+    {
+      "id": 3,
+      "name": "ACT",
+      "type": "llm",
+      "edge_to": [
+        {
+          "id": 4,
+          "params": {
+            "input": {
+              "name": "B",
+              "shape": [
+                8,
+                1
+              ],
+              "values": [
+                1.7627455255994957,
+                -0.3447585414426272,
+                -0.3536229319237997,
+                -0.41937740024787623,
+                0.6256938797342935,
+                0.18693606942873356,
+                1.3714324073778508,
+                -0.5533496226261118
+              ]
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 1476.7789330217056,
+      "output": {
+        "id": "c0e68a87-9339-4c9e-b502-5e99ec6d7bae",
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": "{\"tool\":\"scicom_create_tensor\",\"args\":{\"name\":\"B\",\"shape\":[8,1],\"values\":[1.7627455255994957,-0.3447585414426272,-0.3536229319237997,-0.41937740024787623,0.6256938797342935,0.18693606942873356,1.3714324073778508,-0.5533496226261118]}}",
+              "refusal": null,
+              "role": "assistant",
+              "annotations": null,
+              "audio": null,
+              "function_call": null,
+              "tool_calls": null
+            }
+          }
+        ],
+        "created": 1793686395,
+        "model": "deepseek-flash",
+        "object": "chat.completion",
+        "service_tier": null,
+        "system_fingerprint": "bc19ba97cbe016479903222bb1578db6",
+        "usage": {
+          "completion_tokens": 96,
+          "prompt_tokens": 5012,
+          "total_tokens": 5108,
+          "completion_tokens_details": null,
+          "prompt_tokens_details": {
+            "audio_tokens": null,
+            "cached_tokens": 3712
+          },
+          "prompt_cache_hit_tokens": 3712,
+          "prompt_cache_miss_tokens": 1300
+        }
+      }
+    },
+    {
+      "id": 4,
+      "name": "scicom_create_tensor",
+      "type": "tool_use",
+      "edge_to": [
+        {
+          "id": 5,
+          "params": {
+            "input": {
+              "model": "deepseek-flash",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "Return only one valid JSON object. To call a tool, use keys tool (a tool name) and args (an object). To finish, use only the key answer (an object). Do not emit Markdown or placeholder values. Solve the scientific problem with the supplied tools. Retain and reuse tensors. Report {\"solution_tensor\":\"stored name\", \"solution\":[[...],...]} as answer.\nCall exactly one tool per response. Example: {\"tool\":\"scicom_add_matrices\",\"args\":{}}.\nAvailable tool definitions: [{\"description\": \"No description provided.\", \"name\": \"scicom_add_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_add_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_change_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_basis\": {\"items\": {\"items\": {\"type\": \"number\"}, \"type\": \"array\"}, \"title\": \"New Basis\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_basis\"], \"title\": \"scicom_change_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_compute_eigen\", \"parameters\": {\"properties\": {\"eigenvalues_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvalues Output Name\"}, \"eigenvectors_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvectors Output Name\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_compute_eigen_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_create_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"shape\": {\"items\": {\"type\": \"integer\"}, \"title\": \"Shape\", \"type\": \"array\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"values\": {\"items\": {\"type\": \"number\"}, \"title\": \"Values\", \"type\": \"array\"}}, \"required\": [\"shape\", \"values\", \"name\"], \"title\": \"scicom_create_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_delete_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_delete_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_determinant\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_determinant_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_find_orthonormal_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_find_orthonormal_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_list_tensor_names\", \"parameters\": {\"properties\": {\"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"title\": \"scicom_list_tensor_names_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_matrix_inverse\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_matrix_inverse_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_multiply_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_multiply_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_qr_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"q_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Q Output Name\"}, \"r_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"R Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_qr_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_rank\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_rank_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_scale_matrix\", \"parameters\": {\"properties\": {\"in_place\": {\"default\": true, \"title\": \"In Place\", \"type\": \"boolean\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"scale_factor\": {\"title\": \"Scale Factor\", \"type\": \"number\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"scale_factor\"], \"title\": \"scicom_scale_matrix_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_subtract_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_subtract_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_svd_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"s_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"S Output Name\"}, \"u_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"U Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"v_t_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"V T Output Name\"}}, \"required\": [\"name\"], \"title\": \"scicom_svd_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_transpose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_transpose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_cross_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_cross_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_dot_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_dot_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_project\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_vector\": {\"items\": {\"type\": \"number\"}, \"title\": \"New Vector\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_vector\"], \"title\": \"scicom_vector_project_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_view_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_view_tensor_Args\", \"type\": \"object\"}}]"
+                },
+                {
+                  "role": "user",
+                  "content": "Solve the regularized normal equations A X = B for 1 response vectors. Create A and B in the tensor workspace, reuse A inverse across response vectors, store the solution tensor and report its numeric values. {\"A\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \"B\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]]}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"A\", \"shape\": [8, 8], \"values\": [14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427, 4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962, 2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454, -1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917, 6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159, 2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525, 1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574, 0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]}, \"tool\": \"scicom_create_tensor\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \\\"tensor_name\\\": \\\"A\\\"}\"}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"B\", \"shape\": [8, 1], \"values\": [1.7627455255994957, -0.3447585414426272, -0.3536229319237997, -0.41937740024787623, 0.6256938797342935, 0.18693606942873356, 1.3714324073778508, -0.5533496226261118]}, \"tool\": \"scicom_create_tensor\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]], \\\"tensor_name\\\": \\\"B\\\"}\"}"
+                }
+              ],
+              "response_format": {
+                "type": "json_object"
+              },
+              "temperature": 0,
+              "top_p": 1,
+              "max_tokens": 12000,
+              "extra_body": {
+                "thinking": {
+                  "type": "disabled"
+                }
+              }
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 8.8380390079692,
+      "output": "{\"isError\": false, \"result\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]], \"tensor_name\": \"B\"}"
+    },
+    {
+      "id": 5,
+      "name": "ACT",
+      "type": "llm",
+      "edge_to": [
+        {
+          "id": 6,
+          "params": {
+            "input": {
+              "name": "A",
+              "output_name": "A_inv"
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 1134.8042599856853,
+      "output": {
+        "id": "d76e803b-f553-41f2-912e-59d6565f61ee",
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": "{\"args\": {\"name\": \"A\", \"output_name\": \"A_inv\"}, \"tool\": \"scicom_matrix_inverse\"}",
+              "refusal": null,
+              "role": "assistant",
+              "annotations": null,
+              "audio": null,
+              "function_call": null,
+              "tool_calls": null
+            }
+          }
+        ],
+        "created": 1793686397,
+        "model": "deepseek-flash",
+        "object": "chat.completion",
+        "service_tier": null,
+        "system_fingerprint": "bc19ba97cbe016479903222bb1578db6",
+        "usage": {
+          "completion_tokens": 28,
+          "prompt_tokens": 5233,
+          "total_tokens": 5261,
+          "completion_tokens_details": null,
+          "prompt_tokens_details": {
+            "audio_tokens": null,
+            "cached_tokens": 4992
+          },
+          "prompt_cache_hit_tokens": 4992,
+          "prompt_cache_miss_tokens": 241
+        }
+      }
+    },
+    {
+      "id": 6,
+      "name": "scicom_matrix_inverse",
+      "type": "tool_use",
+      "edge_to": [
+        {
+          "id": 7,
+          "params": {
+            "input": {
+              "model": "deepseek-flash",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "Return only one valid JSON object. To call a tool, use keys tool (a tool name) and args (an object). To finish, use only the key answer (an object). Do not emit Markdown or placeholder values. Solve the scientific problem with the supplied tools. Retain and reuse tensors. Report {\"solution_tensor\":\"stored name\", \"solution\":[[...],...]} as answer.\nCall exactly one tool per response. Example: {\"tool\":\"scicom_add_matrices\",\"args\":{}}.\nAvailable tool definitions: [{\"description\": \"No description provided.\", \"name\": \"scicom_add_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_add_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_change_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_basis\": {\"items\": {\"items\": {\"type\": \"number\"}, \"type\": \"array\"}, \"title\": \"New Basis\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_basis\"], \"title\": \"scicom_change_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_compute_eigen\", \"parameters\": {\"properties\": {\"eigenvalues_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvalues Output Name\"}, \"eigenvectors_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvectors Output Name\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_compute_eigen_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_create_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"shape\": {\"items\": {\"type\": \"integer\"}, \"title\": \"Shape\", \"type\": \"array\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"values\": {\"items\": {\"type\": \"number\"}, \"title\": \"Values\", \"type\": \"array\"}}, \"required\": [\"shape\", \"values\", \"name\"], \"title\": \"scicom_create_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_delete_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_delete_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_determinant\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_determinant_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_find_orthonormal_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_find_orthonormal_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_list_tensor_names\", \"parameters\": {\"properties\": {\"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"title\": \"scicom_list_tensor_names_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_matrix_inverse\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_matrix_inverse_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_multiply_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_multiply_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_qr_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"q_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Q Output Name\"}, \"r_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"R Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_qr_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_rank\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_rank_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_scale_matrix\", \"parameters\": {\"properties\": {\"in_place\": {\"default\": true, \"title\": \"In Place\", \"type\": \"boolean\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"scale_factor\": {\"title\": \"Scale Factor\", \"type\": \"number\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"scale_factor\"], \"title\": \"scicom_scale_matrix_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_subtract_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_subtract_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_svd_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"s_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"S Output Name\"}, \"u_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"U Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"v_t_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"V T Output Name\"}}, \"required\": [\"name\"], \"title\": \"scicom_svd_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_transpose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_transpose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_cross_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_cross_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_dot_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_dot_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_project\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_vector\": {\"items\": {\"type\": \"number\"}, \"title\": \"New Vector\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_vector\"], \"title\": \"scicom_vector_project_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_view_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_view_tensor_Args\", \"type\": \"object\"}}]"
+                },
+                {
+                  "role": "user",
+                  "content": "Solve the regularized normal equations A X = B for 1 response vectors. Create A and B in the tensor workspace, reuse A inverse across response vectors, store the solution tensor and report its numeric values. {\"A\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \"B\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]]}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"A\", \"shape\": [8, 8], \"values\": [14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427, 4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962, 2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454, -1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917, 6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159, 2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525, 1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574, 0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]}, \"tool\": \"scicom_create_tensor\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \\\"tensor_name\\\": \\\"A\\\"}\"}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"B\", \"shape\": [8, 1], \"values\": [1.7627455255994957, -0.3447585414426272, -0.3536229319237997, -0.41937740024787623, 0.6256938797342935, 0.18693606942873356, 1.3714324073778508, -0.5533496226261118]}, \"tool\": \"scicom_create_tensor\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]], \\\"tensor_name\\\": \\\"B\\\"}\"}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"A\", \"output_name\": \"A_inv\"}, \"tool\": \"scicom_matrix_inverse\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[0.08614957870351764, -0.010449642599299697, -0.005844844532899155, 0.013167775259721163, -0.02316145740920694, -0.014738858093091622, -0.008753118726539869, 0.000931554064565121], [-0.010449642599299694, 0.05394789533438727, -0.009111754829056675, -0.005359467127950407, -0.013397644262299349, 0.005597216633349672, 0.0056106574556339245, 0.00638611095802809], [-0.005844844532899152, -0.009111754829056675, 0.07481848039090915, -0.008485171925559552, -0.011537621547731594, -0.013214331827326764, -0.009135094866909225, 0.006109989401423328], [0.013167775259721163, -0.005359467127950404, -0.008485171925559552, 0.0979569980222328, -0.010001049671151037, 0.010040456605626144, 0.012552908234348813, 0.020416908230872114], [-0.02316145740920694, -0.013397644262299347, -0.01153762154773159, -0.010001049671151037, 0.0644724919668262, 0.009531745064824964, 0.0097559378816961, -0.009390475681293281], [-0.014738858093091625, 0.005597216633349671, -0.013214331827326765, 0.010040456605626144, 0.009531745064824968, 0.07418973119094197, 0.015462054869310946, 0.0045170525053384045], [-0.00875311872653987, 0.005610657455633923, -0.009135094866909225, 0.01255290823434881, 0.009755937881696103, 0.01546205486931094, 0.04775650484369185, -0.006414451372140293], [0.0009315540645651204, 0.006386110958028089, 0.006109989401423327, 0.020416908230872114, -0.00939047568129328, 0.004517052505338409, -0.00641445137214029, 0.06786684140573829]], \\\"tool\\\": \\\"scicom_matrix_inverse\\\"}\"}"
+                }
+              ],
+              "response_format": {
+                "type": "json_object"
+              },
+              "temperature": 0,
+              "top_p": 1,
+              "max_tokens": 12000,
+              "extra_body": {
+                "thinking": {
+                  "type": "disabled"
+                }
+              }
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 9.166428004391491,
+      "output": "{\"isError\": false, \"result\": [[0.08614957870351764, -0.010449642599299697, -0.005844844532899155, 0.013167775259721163, -0.02316145740920694, -0.014738858093091622, -0.008753118726539869, 0.000931554064565121], [-0.010449642599299694, 0.05394789533438727, -0.009111754829056675, -0.005359467127950407, -0.013397644262299349, 0.005597216633349672, 0.0056106574556339245, 0.00638611095802809], [-0.005844844532899152, -0.009111754829056675, 0.07481848039090915, -0.008485171925559552, -0.011537621547731594, -0.013214331827326764, -0.009135094866909225, 0.006109989401423328], [0.013167775259721163, -0.005359467127950404, -0.008485171925559552, 0.0979569980222328, -0.010001049671151037, 0.010040456605626144, 0.012552908234348813, 0.020416908230872114], [-0.02316145740920694, -0.013397644262299347, -0.01153762154773159, -0.010001049671151037, 0.0644724919668262, 0.009531745064824964, 0.0097559378816961, -0.009390475681293281], [-0.014738858093091625, 0.005597216633349671, -0.013214331827326765, 0.010040456605626144, 0.009531745064824968, 0.07418973119094197, 0.015462054869310946, 0.0045170525053384045], [-0.00875311872653987, 0.005610657455633923, -0.009135094866909225, 0.01255290823434881, 0.009755937881696103, 0.01546205486931094, 0.04775650484369185, -0.006414451372140293], [0.0009315540645651204, 0.006386110958028089, 0.006109989401423327, 0.020416908230872114, -0.00939047568129328, 0.004517052505338409, -0.00641445137214029, 0.06786684140573829]], \"tool\": \"scicom_matrix_inverse\"}"
+    },
+    {
+      "id": 7,
+      "name": "ACT",
+      "type": "llm",
+      "edge_to": [
+        {
+          "id": 8,
+          "params": {
+            "input": {
+              "name_a": "A_inv",
+              "name_b": "B",
+              "output_name": "X"
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 977.0936210406944,
+      "output": {
+        "id": "03c40ac1-2f49-4b73-932b-9968a121db3c",
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": "{\"args\": {\"name_a\": \"A_inv\", \"name_b\": \"B\", \"output_name\": \"X\"}, \"tool\": \"scicom_multiply_matrices\"}",
+              "refusal": null,
+              "role": "assistant",
+              "annotations": null,
+              "audio": null,
+              "function_call": null,
+              "tool_calls": null
+            }
+          }
+        ],
+        "created": 1793686398,
+        "model": "deepseek-flash",
+        "object": "chat.completion",
+        "service_tier": null,
+        "system_fingerprint": "bc19ba97cbe016479903222bb1578db6",
+        "usage": {
+          "completion_tokens": 37,
+          "prompt_tokens": 5935,
+          "total_tokens": 5972,
+          "completion_tokens_details": null,
+          "prompt_tokens_details": {
+            "audio_tokens": null,
+            "cached_tokens": 5248
+          },
+          "prompt_cache_hit_tokens": 5248,
+          "prompt_cache_miss_tokens": 687
+        }
+      }
+    },
+    {
+      "id": 8,
+      "name": "scicom_multiply_matrices",
+      "type": "tool_use",
+      "edge_to": [
+        {
+          "id": 9,
+          "params": {
+            "input": {
+              "model": "deepseek-flash",
+              "messages": [
+                {
+                  "role": "system",
+                  "content": "Return only one valid JSON object. To call a tool, use keys tool (a tool name) and args (an object). To finish, use only the key answer (an object). Do not emit Markdown or placeholder values. Solve the scientific problem with the supplied tools. Retain and reuse tensors. Report {\"solution_tensor\":\"stored name\", \"solution\":[[...],...]} as answer.\nCall exactly one tool per response. Example: {\"tool\":\"scicom_add_matrices\",\"args\":{}}.\nAvailable tool definitions: [{\"description\": \"No description provided.\", \"name\": \"scicom_add_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_add_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_change_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_basis\": {\"items\": {\"items\": {\"type\": \"number\"}, \"type\": \"array\"}, \"title\": \"New Basis\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_basis\"], \"title\": \"scicom_change_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_compute_eigen\", \"parameters\": {\"properties\": {\"eigenvalues_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvalues Output Name\"}, \"eigenvectors_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Eigenvectors Output Name\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_compute_eigen_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_create_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"shape\": {\"items\": {\"type\": \"integer\"}, \"title\": \"Shape\", \"type\": \"array\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"values\": {\"items\": {\"type\": \"number\"}, \"title\": \"Values\", \"type\": \"array\"}}, \"required\": [\"shape\", \"values\", \"name\"], \"title\": \"scicom_create_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_delete_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_delete_tensor_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_determinant\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_determinant_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_find_orthonormal_basis\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_find_orthonormal_basis_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_list_tensor_names\", \"parameters\": {\"properties\": {\"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"title\": \"scicom_list_tensor_names_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_matrix_inverse\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_matrix_inverse_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_multiply_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_multiply_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_qr_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"q_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Q Output Name\"}, \"r_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"R Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_qr_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_rank\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_rank_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_scale_matrix\", \"parameters\": {\"properties\": {\"in_place\": {\"default\": true, \"title\": \"In Place\", \"type\": \"boolean\"}, \"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"scale_factor\": {\"title\": \"Scale Factor\", \"type\": \"number\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"scale_factor\"], \"title\": \"scicom_scale_matrix_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_subtract_matrices\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_subtract_matrices_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_svd_decompose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"s_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"S Output Name\"}, \"u_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"U Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}, \"v_t_output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"V T Output Name\"}}, \"required\": [\"name\"], \"title\": \"scicom_svd_decompose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_transpose\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_transpose_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_cross_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_cross_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_dot_product\", \"parameters\": {\"properties\": {\"name_a\": {\"title\": \"Name A\", \"type\": \"string\"}, \"name_b\": {\"title\": \"Name B\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name_a\", \"name_b\"], \"title\": \"scicom_vector_dot_product_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_vector_project\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"new_vector\": {\"items\": {\"type\": \"number\"}, \"title\": \"New Vector\", \"type\": \"array\"}, \"output_name\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Output Name\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\", \"new_vector\"], \"title\": \"scicom_vector_project_Args\", \"type\": \"object\"}}, {\"description\": \"No description provided.\", \"name\": \"scicom_view_tensor\", \"parameters\": {\"properties\": {\"name\": {\"title\": \"Name\", \"type\": \"string\"}, \"uid\": {\"anyOf\": [{\"type\": \"string\"}, {\"type\": \"null\"}], \"default\": null, \"title\": \"Uid\"}}, \"required\": [\"name\"], \"title\": \"scicom_view_tensor_Args\", \"type\": \"object\"}}]"
+                },
+                {
+                  "role": "user",
+                  "content": "Solve the regularized normal equations A X = B for 1 response vectors. Create A and B in the tensor workspace, reuse A inverse across response vectors, store the solution tensor and report its numeric values. {\"A\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \"B\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]]}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"A\", \"shape\": [8, 8], \"values\": [14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427, 4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962, 2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454, -1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917, 6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159, 2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525, 1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574, 0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]}, \"tool\": \"scicom_create_tensor\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[14.6524715367233, 4.311829157625619, 2.9656632297843695, -1.3086375309359881, 6.022699172760985, 2.253702850826244, 1.1724379756895225, 0.3139859550743427], [4.311829157625619, 23.114006754253104, 4.370239407791377, 2.9619961871430234, 7.833389139522949, -0.5895449890199894, -3.645256088800175, -2.7401053706555962], [2.9656632297843695, 4.370239407791377, 15.620577613756467, 1.7013610296915493, 4.326295596780325, 2.2182204391678746, 0.7202933707851735, -1.8510241567155454], [-1.3086375309359881, 2.9619961871430234, 1.7013610296915493, 12.479405625122691, 2.586603569204897, -1.056020318374333, -4.285891277404788, -4.145100098964917], [6.022699172760985, 7.833389139522949, 4.326295596780325, 2.586603569204897, 21.268808571053366, -0.9979776158158234, -3.598981366091503, 0.6817353653666159], [2.253702850826244, -0.5895449890199894, 2.2182204391678746, -1.056020318374333, -0.9979776158158234, 15.51878911681803, -3.8230701074960134, -1.3897913165604525], [1.1724379756895225, -3.645256088800175, 0.7202933707851735, -4.285891277404788, -3.598981366091503, -3.8230701074960134, 25.31712528772318, 3.7007588651288574], [0.3139859550743427, -2.7401053706555962, -1.8510241567155454, -4.145100098964917, 0.6817353653666159, -1.3897913165604525, 3.7007588651288574, 16.93852081570122]], \\\"tensor_name\\\": \\\"A\\\"}\"}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"B\", \"shape\": [8, 1], \"values\": [1.7627455255994957, -0.3447585414426272, -0.3536229319237997, -0.41937740024787623, 0.6256938797342935, 0.18693606942873356, 1.3714324073778508, -0.5533496226261118]}, \"tool\": \"scicom_create_tensor\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[1.7627455255994957], [-0.3447585414426272], [-0.3536229319237997], [-0.41937740024787623], [0.6256938797342935], [0.18693606942873356], [1.3714324073778508], [-0.5533496226261118]], \\\"tensor_name\\\": \\\"B\\\"}\"}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name\": \"A\", \"output_name\": \"A_inv\"}, \"tool\": \"scicom_matrix_inverse\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[0.08614957870351764, -0.010449642599299697, -0.005844844532899155, 0.013167775259721163, -0.02316145740920694, -0.014738858093091622, -0.008753118726539869, 0.000931554064565121], [-0.010449642599299694, 0.05394789533438727, -0.009111754829056675, -0.005359467127950407, -0.013397644262299349, 0.005597216633349672, 0.0056106574556339245, 0.00638611095802809], [-0.005844844532899152, -0.009111754829056675, 0.07481848039090915, -0.008485171925559552, -0.011537621547731594, -0.013214331827326764, -0.009135094866909225, 0.006109989401423328], [0.013167775259721163, -0.005359467127950404, -0.008485171925559552, 0.0979569980222328, -0.010001049671151037, 0.010040456605626144, 0.012552908234348813, 0.020416908230872114], [-0.02316145740920694, -0.013397644262299347, -0.01153762154773159, -0.010001049671151037, 0.0644724919668262, 0.009531745064824964, 0.0097559378816961, -0.009390475681293281], [-0.014738858093091625, 0.005597216633349671, -0.013214331827326765, 0.010040456605626144, 0.009531745064824968, 0.07418973119094197, 0.015462054869310946, 0.0045170525053384045], [-0.00875311872653987, 0.005610657455633923, -0.009135094866909225, 0.01255290823434881, 0.009755937881696103, 0.01546205486931094, 0.04775650484369185, -0.006414451372140293], [0.0009315540645651204, 0.006386110958028089, 0.006109989401423327, 0.020416908230872114, -0.00939047568129328, 0.004517052505338409, -0.00641445137214029, 0.06786684140573829]], \\\"tool\\\": \\\"scicom_matrix_inverse\\\"}\"}"
+                },
+                {
+                  "role": "assistant",
+                  "content": "{\"args\": {\"name_a\": \"A_inv\", \"name_b\": \"B\", \"output_name\": \"X\"}, \"tool\": \"scicom_multiply_matrices\"}"
+                },
+                {
+                  "role": "user",
+                  "content": "{\"tool_result\": \"{\\\"isError\\\": false, \\\"result\\\": [[0.1222399995141877], [-0.034724910564875894], [-0.05565903921397459], [-0.011484136183692518], [0.03276307479209117], [0.011089950901202676], [0.05864102909624855], [-0.06266483649015335]], \\\"tool\\\": \\\"scicom_multiply_matrices\\\"}\"}"
+                }
+              ],
+              "response_format": {
+                "type": "json_object"
+              },
+              "temperature": 0,
+              "top_p": 1,
+              "max_tokens": 12000,
+              "extra_body": {
+                "thinking": {
+                  "type": "disabled"
+                }
+              }
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 10.237904964014888,
+      "output": "{\"isError\": false, \"result\": [[0.1222399995141877], [-0.034724910564875894], [-0.05565903921397459], [-0.011484136183692518], [0.03276307479209117], [0.011089950901202676], [0.05864102909624855], [-0.06266483649015335]], \"tool\": \"scicom_multiply_matrices\"}"
+    },
+    {
+      "id": 9,
+      "name": "ACT",
+      "type": "llm",
+      "edge_to": [
+        {
+          "id": 10,
+          "params": {
+            "input": {
+              "name": "X"
+            }
+          },
+          "interval": 0
+        }
+      ],
+      "time": 1097.3506949958391,
+      "output": {
+        "id": "bfacbc83-210e-4d2c-a2a4-e3335fe25ae5",
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "index": 0,
+            "logprobs": null,
+            "message": {
+              "content": "{\"answer\": {\"solution_tensor\": \"X\", \"solution\": [[0.1222399995141877], [-0.034724910564875894], [-0.05565903921397459], [-0.011484136183692518], [0.03276307479209117], [0.011089950901202676], [0.05864102909624855], [-0.06266483649015335]]}}",
+              "refusal": null,
+              "role": "assistant",
+              "annotations": null,
+              "audio": null,
+              "function_call": null,
+              "tool_calls": null
+            }
+          }
+        ],
+        "created": 1793686399,
+        "model": "deepseek-flash",
+        "object": "chat.completion",
+        "service_tier": null,
+        "system_fingerprint": "bc19ba97cbe016479903222bb1578db6",
+        "usage": {
+          "completion_tokens": 95,
+          "prompt_tokens": 6084,
+          "total_tokens": 6179,
+          "completion_tokens_details": null,
+          "prompt_tokens_details": {
+            "audio_tokens": null,
+            "cached_tokens": 5888
+          },
+          "prompt_cache_hit_tokens": 5888,
+          "prompt_cache_miss_tokens": 196
+        }
+      }
+    },
+    {
+      "id": 10,
+      "name": "scicom_view_tensor",
+      "type": "tool_use",
+      "edge_to": [
+        {
+          "id": 11,
+          "params": {},
+          "interval": 0
+        }
+      ],
+      "time": 8.260751026682556,
+      "output": "{\"isError\": false, \"result\": [[0.1222399995141877], [-0.034724910564875894], [-0.05565903921397459], [-0.011484136183692518], [0.03276307479209117], [0.011089950901202676], [0.05864102909624855], [-0.06266483649015335]], \"tensor_name\": \"X\"}"
+    },
+    {
+      "id": 11,
+      "name": "end",
+      "type": "end",
+      "edge_to": [],
+      "time": 0,
+      "output": null
+    }
+  ]
+}

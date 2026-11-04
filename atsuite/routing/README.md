@@ -54,6 +54,14 @@ JointController consume this same sample without truncating it again. Compute,
 state, LLM time and call-structure correlations are preserved; state access volume
 is not renamed or imputed as peak memory. Missing input sizes keep confidence low.
 
+Normal routing ranks feasible candidates with complete, comparable cost forecasts
+by the configured cost/latency objective even when history or model confidence is
+low. Confidence remains visible in diagnostics and exploration; it is not an
+admission constraint. Cost-only routing does not require an unused latency
+forecast. Unknown/exhausted capacity, unsupported Tools and actual execution
+deadlines still prevent dispatch. Missing cost estimates or incomparable currencies
+still use the validated fallback rather than fabricated zero costs.
+
 Optional budgeted contextual epsilon-greedy explores feasible, analytically
 promising pools and records the full probability distribution. Only chosen-pool
 feedback trains the online model. Unknown resource priors do not bypass validated

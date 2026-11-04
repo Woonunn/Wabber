@@ -4,6 +4,7 @@ import os
 import time
 import uuid
 import threading
+from contextlib import ExitStack
 from dataclasses import replace
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -86,10 +87,10 @@ class RuntimeAdapter(Protocol):
     def invoke(self, request: InvocationRequest) -> InvocationResult:
         ...
 
-    def close_session(self, session: RuntimeSession) -> None:
+    def close_session(self, session: RuntimeSession) -> dict | None:
         ...
 
-    def cleanup_run(self, uid: str) -> None:
+    def cleanup_run(self, uid: str) -> list[dict] | None:
         ...
 
 
@@ -154,10 +155,10 @@ class _BaseRuntimeAdapter:
         except KeyError as exc:
             raise ValueError(f"Missing endpoint for target: {target_id}") from exc
 
-    def close_session(self, session: RuntimeSession) -> None:
+    def close_session(self, session: RuntimeSession) -> dict | None:
         return None
 
-    def cleanup_run(self, uid: str) -> None:
+    def cleanup_run(self, uid: str) -> list[dict] | None:
         return None
 
 
@@ -269,7 +270,11 @@ class MCPRuntimeAdapter(_BaseRuntimeAdapter):
         client = self._client(target, uid)
         initialize_request_id = None
         if not getattr(client, "_initialized", False):
-            initialize_request_id = client.initialize()
+            try:
+                initialize_request_id = client.initialize()
+            except BaseException:
+                self.close_session(RuntimeSession(uid=uid, target_id=target.target_id))
+                raise
         return RuntimeSession(
             uid=uid,
             target_id=target.target_id,
@@ -277,15 +282,28 @@ class MCPRuntimeAdapter(_BaseRuntimeAdapter):
             metadata={"initialize_request_id": initialize_request_id or ""},
         )
 
-    def close_session(self, session: RuntimeSession) -> None:
+    def close_session(self, session: RuntimeSession) -> dict | None:
         with self._clients_lock:
             client = self._clients.pop(f"{session.target_id}:{session.uid}", None)
         if client is not None and hasattr(client, "close"):
             client.close()
+            metadata = getattr(client, "last_close_metadata", None)
+            if isinstance(metadata, dict):
+                return {"target_id": session.target_id, **metadata}
+        return None
 
-    def cleanup_run(self, uid: str) -> None:
-        for target_id in self.targets:
-            self.close_session(RuntimeSession(uid=uid, target_id=target_id))
+    def cleanup_run(self, uid: str) -> list[dict]:
+        receipts = []
+
+        def release(target_id):
+            receipt = self.close_session(RuntimeSession(uid=uid, target_id=target_id))
+            if receipt is not None:
+                receipts.append(receipt)
+
+        with ExitStack() as stack:
+            for target_id in self.targets:
+                stack.callback(release, target_id)
+        return receipts
 
     def invoke(self, request: InvocationRequest) -> InvocationResult:
         target = self._target(request.target_id)

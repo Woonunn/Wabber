@@ -1,0 +1,89 @@
+{
+  "trace_file": "/root/Wabber/results/e3-realtest/datasci-workload/trace.atg.json",
+  "nodes": [
+    {
+      "name": "AgentTools",
+      "dir": "./nodes/AgentTools",
+      "trace_names": [
+        {
+          "name": "prepare_workspace",
+          "tool": "prepare_workspace",
+          "access": "rw",
+          "domain": "agent_workspace"
+        },
+        {
+          "name": "execute_analysis",
+          "tool": "execute_analysis",
+          "access": "r",
+          "domain": "agent_workspace"
+        },
+        {
+          "name": "read_workspace",
+          "tool": "read_workspace",
+          "access": "r",
+          "domain": "agent_workspace"
+        },
+        {
+          "name": "merge_artifacts",
+          "tool": "merge_artifacts",
+          "access": "rw",
+          "domain": "agent_workspace"
+        },
+        {
+          "name": "validate_result",
+          "tool": "validate_result",
+          "access": "r",
+          "domain": "agent_workspace"
+        }
+      ]
+    }
+  ],
+  "pipeline": {
+    "faas": {
+      "build": {
+        "python_version": "3.12.12",
+        "base_image": "python:3.12.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c"
+      },
+      "units": [
+        {
+          "name": "E2bAliAgentrun",
+          "node": "AgentTools",
+          "trace_names": [
+            "prepare_workspace",
+            "execute_analysis",
+            "read_workspace",
+            "merge_artifacts",
+            "validate_result"
+          ],
+          "deploy": {
+            "cpu": 2,
+            "memory": 3008,
+            "disk": 10240,
+            "timeout": 240
+          }
+        }
+      ]
+    },
+    "mcp_serverless": {
+      "build": {
+        "python_version": "3.12.12",
+        "base_image": "python:3.12.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c"
+      },
+      "servers": [
+        {
+          "name": "E2bAliAgentrun",
+          "nodes": [
+            "AgentTools"
+          ],
+          "deploy": {
+            "cpu": 2,
+            "memory": 3008,
+            "disk": 10240,
+            "timeout": 240
+          }
+        }
+      ]
+    }
+  },
+  "experiment_workload": "/root/Wabber/results/e3-realtest/datasci-workload"
+}

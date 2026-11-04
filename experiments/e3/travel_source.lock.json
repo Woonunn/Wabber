@@ -1,0 +1,23 @@
+{
+  "upstream": "https://github.com/OSU-NLP-Group/TravelPlanner",
+  "revision": "e52c87f4ac348a3410c46dc3553c519db5ec5e23",
+  "database_url": "https://drive.usercontent.google.com/download?id=1pF1Sw6pBmq2sFkJvm-LzJOqrmfWoQgxE&export=download&confirm=t",
+  "archive_sha256": "de345b0c243cd8c85355a264c5124db5db275327d2a38fa8685c6e69fabb650b",
+  "dataset": "osunlp/TravelPlanner",
+  "split": "validation",
+  "selection": "first validation row per difficulty, before provider profiling",
+  "indices": [
+    0,
+    60,
+    120
+  ],
+  "source_rows_sha256": "93bfcac70818dc7f485aae7c2ad8cdc8499826cf0bbb0420f79b3ffd5dd9f1ec",
+  "database": {
+    "flights.csv": "8dafdb0e3f8b79ce599a1e612a772865295bc226b46e5fb278368f7255b11cee",
+    "accommodations.csv": "7e70cc8cb573e824267be47153a3cf7934c839f01c955fb523d18be405921d86",
+    "clean_restaurant_2022.csv": "a38ef00a3398b1ef78306a9b1851c491723d27899c6a1d4a3d6fe042929c0f26",
+    "attractions.csv": "8007fa851ba5b3adb205fbd298169c95116b297cef7ccd21dbea26ecce2605d8",
+    "distance.csv": "7dc1a26dc7877ae96ce63e74be0d9660bbdef96ffccaffce441128e3a4864a27",
+    "citySet_with_states.txt": "a3d18b5c692857cd561cbb4ad8d221ac3eb6c47af7c787a3489e3ffa184ca4d6"
+  }
+}

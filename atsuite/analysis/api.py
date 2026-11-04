@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
 
 from atsuite.analysis.aggregation import ReportAggregator
 from atsuite.analysis.collectors import ProviderCollector, create_collector
 from atsuite.analysis.export import AnalysisExporter
-from atsuite.analysis.model import AnalysisReport
+from atsuite.analysis.model import (
+    AnalysisReport,
+    CostLineItem,
+    ProviderMetric,
+    RunContext,
+    StateObservation,
+)
 from atsuite.analysis.observer import RunRecorder
 from atsuite.analysis.pricing import PricingPolicy, create_pricing_policy
 from atsuite.analysis.timeline import PerfettoTraceExporter, TimelineBuilder
@@ -19,15 +24,28 @@ from atsuite.analysis.timeline import PerfettoTraceExporter, TimelineBuilder
 class AnalyzeOptions:
     output_dir: str | Path = "results"
     wait_for_ingestion: bool = False
-    timestamp: Optional[str] = None
+    timestamp: str | None = None
+
+
+def price_metrics(
+    context: RunContext,
+    metrics: list[ProviderMetric],
+    state: list[StateObservation],
+    pricing_policy: PricingPolicy | None = None,
+) -> list[CostLineItem]:
+    """Price collected measurements through the same policy used by Analyzer."""
+    policy = pricing_policy or create_pricing_policy(context.provider, context.observability_provider)
+    return policy.price(
+        context, metrics=[m for m in metrics if m.fields.get("confidence") != "client_only"], state=state
+    )
 
 
 def analyze_recorder(
     recorder: RunRecorder,
     *,
-    options: Optional[AnalyzeOptions] = None,
-    collector: Optional[ProviderCollector] = None,
-    pricing_policy: Optional[PricingPolicy] = None,
+    options: AnalyzeOptions | None = None,
+    collector: ProviderCollector | None = None,
+    pricing_policy: PricingPolicy | None = None,
 ) -> AnalysisReport:
     options = options or AnalyzeOptions()
     context = recorder.context
@@ -56,11 +74,7 @@ def analyze_recorder(
         context.provider,
         context.observability_provider,
     )
-    costs = pricing_policy.price(
-        context,
-        metrics=[metric for metric in collection.metrics if metric.fields.get("confidence") != "client_only"],
-        state=recorder.state,
-    )
+    costs = price_metrics(context, collection.metrics, recorder.state, pricing_policy)
     report = ReportAggregator().aggregate(
         context,
         nodes=recorder.nodes,
@@ -96,10 +110,10 @@ def analyze_recorder(
 
 def analyze_events(
     events_path: str | Path,
-    options: Optional[AnalyzeOptions] = None,
+    options: AnalyzeOptions | None = None,
     *,
-    collector: Optional[ProviderCollector] = None,
-    pricing_policy: Optional[PricingPolicy] = None,
+    collector: ProviderCollector | None = None,
+    pricing_policy: PricingPolicy | None = None,
 ) -> AnalysisReport:
     recorder = RunRecorder.from_events(events_path)
     return analyze_recorder(

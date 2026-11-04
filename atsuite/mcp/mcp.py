@@ -4,6 +4,7 @@ import threading
 import uuid
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlsplit
 
 import httpx
 import requests
@@ -62,6 +63,7 @@ class MCPClient:
         self.session_id = None
         self.initialize_request_id = None
         self._initialized = False
+        self.protocol_version = None
         self._init_lock = threading.Lock()
         self._http_client = httpx.Client(
             limits=httpx.Limits(max_connections=500, max_keepalive_connections=500),
@@ -70,7 +72,24 @@ class MCPClient:
         print(f"[MCPClient] Created instance for url={self.url}, uid={uid}")
 
     def close(self):
-        self._http_client.close()
+        try:
+            if self.session_id:
+                headers = {"mcp-session-id": self.session_id}
+                if self.protocol_version:
+                    headers["mcp-protocol-version"] = self.protocol_version
+                response = self._http_client.delete(f"{self.url}/mcp", headers=headers, timeout=30)
+                if response.status_code != 404:
+                    response.raise_for_status()
+                self.last_close_metadata = {
+                    "provider_session_id": self.session_id,
+                    "request_id": response.headers.get("x-fc-request-id", ""),
+                    "http_status": response.status_code,
+                    "closed_epoch_s": time.time(),
+                }
+                self.session_id = None
+                self._initialized = False
+        finally:
+            self._http_client.close()
 
     @staticmethod
     def _raise_if_mcp_error(response_payload: Optional[dict]) -> None:
@@ -208,13 +227,15 @@ class MCPClient:
             print(
                 f"[MCPClient._init] Server error {resp.status_code}, body={resp.text[:200]}, url={self.url}, uid={self.uid}"
             )
+        self.session_id = resp.headers.get("Mcp-Session-Id") or self.session_id
         resp.raise_for_status()
         payload = self._read_streamable_response(resp)
         self._raise_if_mcp_error(payload)
+        if isinstance(payload, dict):
+            self.protocol_version = (payload.get("result") or {}).get("protocolVersion")
         self.initialize_request_id = resp.headers.get(
             "X-Fc-Request-Id"
         ) or resp.headers.get("x-amzn-requestid")
-        self.session_id = resp.headers.get("Mcp-Session-Id")
         print(
             f"[MCPClient._init] Success session_id={self.session_id}, url={self.url}, uid={self.uid}, thread={thread_id}"
         )
@@ -383,6 +404,37 @@ class AgentCoreMCPClient:
 
         session = BotocoreSession()
         self._credentials = session.get_credentials().get_frozen_credentials()
+
+    def close(self):
+        """Stop this task's runtime session after all tool responses have been read."""
+        if not self.session_id:
+            return
+        from botocore.auth import SigV4Auth
+        from botocore.awsrequest import AWSRequest
+
+        endpoint = urlsplit(self.url)
+        if not endpoint.path.endswith("/invocations"):
+            raise ValueError("AgentCore endpoint must end with /invocations")
+        url = endpoint._replace(path=endpoint.path.rsplit("/", 1)[0] + "/stopruntimesession").geturl()
+        request = AWSRequest(
+            method="POST", url=url, data="{}",
+            headers={
+                "Content-Type": "application/json",
+                "X-Amzn-Bedrock-AgentCore-Runtime-Session-Id": self.session_id,
+            },
+        )
+        SigV4Auth(self._credentials, "bedrock-agentcore", self.region).add_auth(request)
+        response = requests.post(url, data="{}", headers=dict(request.headers), timeout=30)
+        if response.status_code != 404:
+            response.raise_for_status()
+        self.last_close_metadata = {
+            "provider_session_id": self.session_id,
+            "request_id": response.headers.get("x-amzn-requestid", ""),
+            "http_status": response.status_code,
+            "closed_epoch_s": time.time(),
+        }
+        self.session_id = None
+        self._initialized = False
 
     def initialize(self, request_id: Optional[str] = None):
         """保持旧的简化路径：不单独发送 initialize，请求时再复用服务端返回的 session。"""
@@ -604,9 +656,9 @@ class AgentCoreMCPClient:
                 request_id=request_id,
                 timeout=timeout, run_id=run_id,
             ) as response:
+                self.session_id = response.headers.get("Mcp-Session-Id") or self.session_id
                 response.raise_for_status()
                 request_id = response.headers.get("x-amzn-RequestId")
-                self.session_id = response.headers.get("Mcp-Session-Id") or self.session_id
                 response_payload = self._read_streamable_response(response)
                 if not full_response:
                     self._raise_if_mcp_error(response_payload)
@@ -625,12 +677,10 @@ class AgentCoreMCPClient:
             request_id=request_id,
             timeout=timeout, run_id=run_id,
         )
+        self.session_id = response.headers.get("Mcp-Session-Id") or self.session_id
         response.raise_for_status()
 
-        # 从响应头获取 request_id 和 session_id
         request_id = response.headers.get("x-amzn-RequestId")
-        # 如果响应中有session_id，保存它以便后续请求复用
-        self.session_id = response.headers.get("Mcp-Session-Id") or self.session_id
 
         response_payload = self._read_response_payload(response)
         if not full_response:

@@ -4,8 +4,8 @@ from http.server import ThreadingHTTPServer
 
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--port',type=int,default=9200);p.add_argument('--family',choices=['faas','mcp'],default='faas');a=p.parse_args()
-    os.environ['ATSUITE_NODE_MODULE']='benchmarks.DataSciBench.nodes.AgentTools.implementation'
+    p=argparse.ArgumentParser();p.add_argument('--port',type=int,default=9200);p.add_argument('--family',choices=['faas','mcp'],default='faas');p.add_argument('--module',default='benchmarks.DataSciBench.nodes.AgentTools.implementation');a=p.parse_args()
+    os.environ['ATSUITE_NODE_MODULE']=a.module
     os.environ['ATSUITE_RUNTIME']='mcp' if a.family=='mcp' else 'function'
     if a.family=='mcp':
         import importlib
@@ -21,7 +21,8 @@ def main():
             async with original_lifespan(application):
                 try:yield
                 finally:
-                    if tools._mcp_kernel:tools._mcp_kernel.close()
+                    kernel=getattr(tools,'_mcp_kernel',None)
+                    if kernel:kernel.close()
         app.router.lifespan_context=lifespan
         uvicorn.run(app,host='127.0.0.1',port=a.port)
     else:

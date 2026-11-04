@@ -8,6 +8,7 @@ FROM --platform=linux/amd64 public.ecr.aws/docker/library/python:${VERSION}-slim
 ARG VERSION=3.11
 ARG PIP_INDEX_URL
 ARG PIP_TRUSTED_HOST
+ARG ATSUITE_SYSTEM_PACKAGES=""
 ENV PIP_INDEX_URL=${PIP_INDEX_URL}
 ENV PIP_TRUSTED_HOST=${PIP_TRUSTED_HOST}
 
@@ -23,6 +24,13 @@ RUN pip install -q uv==0.13.6 && uv pip install \
     --index-strategy unsafe-best-match \
     --target /pkg \
     -r requirements.txt
+
+# Download ARM packages on the build host; the final stage still needs no QEMU.
+RUN mkdir /system && if [ -n "${ATSUITE_SYSTEM_PACKAGES}" ]; then \
+    dpkg --add-architecture arm64 && apt-get update && \
+    apt-get -o Dir::State::status=/dev/null -o APT::Architecture=arm64 --download-only --no-install-recommends -y install ${ATSUITE_SYSTEM_PACKAGES} && \
+    for package in /var/cache/apt/archives/*.deb; do dpkg-deb -x "$package" /system; done; \
+    fi
 
 FROM --platform=linux/arm64 public.ecr.aws/docker/library/python:${VERSION}-slim
 
@@ -47,6 +55,7 @@ ENV PYTHON_VERSION=${VERSION}
 
 WORKDIR /app
 COPY --from=installer /pkg /app/deps
+COPY --from=installer /system /
 
 COPY . /app
 

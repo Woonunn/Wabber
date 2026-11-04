@@ -1,0 +1,67 @@
+{
+  "duration_ms": 600000,
+  "source": "results/phase3/arrivals-v1/arrivals.csv",
+  "source_sha256": "d069f897e474e15c553f0cae89e547a020d6444f9fc2bacafab83ff79283d625",
+  "source_start_utc": "2026-06-01T00:00:00Z",
+  "source_offset_ms": 0,
+  "seed": 9,
+  "composition": {
+    "DataSciBench": 1,
+    "TravelPlanner": 1,
+    "ClaudeCodeReview": 1,
+    "ScientificComputation": 1
+  },
+  "profile": {
+    "TravelPlanner": [
+      "validation-0",
+      "validation-60",
+      "validation-120"
+    ],
+    "ClaudeCodeReview": [
+      "requests-201",
+      "itsdangerous-202",
+      "click-203"
+    ],
+    "DataSciBench": [
+      "bcb1011"
+    ],
+    "ScientificComputation": [
+      "normal-8-1"
+    ]
+  },
+  "formal": {
+    "TravelPlanner": [
+      "validation-1",
+      "validation-2",
+      "validation-61",
+      "validation-62",
+      "validation-121",
+      "validation-122"
+    ],
+    "ClaudeCodeReview": [
+      "requests-301",
+      "requests-302",
+      "itsdangerous-303",
+      "itsdangerous-304",
+      "click-305",
+      "click-306"
+    ],
+    "DataSciBench": [
+      "bcb1024",
+      "bcb1035",
+      "bcb1037",
+      "bcb1043",
+      "bcb105",
+      "bcb1061"
+    ],
+    "ScientificComputation": [
+      "normal-16-1-seed-1001",
+      "normal-16-1-seed-1002",
+      "normal-32-4-seed-1001",
+      "normal-32-4-seed-1002",
+      "normal-96-8-seed-1001",
+      "normal-96-8-seed-1002"
+    ]
+  },
+  "capture_policy": "bounded at most 3 live attempts per task, first independently valid Capture; no validator feedback to model, no replacement task; all attempts retained; freeze before provider comparisons"
+}

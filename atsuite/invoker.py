@@ -503,15 +503,17 @@ def _run_trace(
     finally:
         try:
             cleanup_started_at = time.time()
-            size = cleaner(
-                provider,
-                bucket_name,
-                toclean,
-                uid,
-                url_map=url_map,
-                bench_name=resolved.bench_name,
-            )
-            runtime.cleanup_run(uid)
+            try:
+                size = cleaner(
+                    provider,
+                    bucket_name,
+                    toclean,
+                    uid,
+                    url_map=url_map,
+                    bench_name=resolved.bench_name,
+                )
+            finally:
+                runtime.cleanup_run(uid)
 
             if analyzer:
                 analyzer.record_state_cleanup(

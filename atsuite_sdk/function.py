@@ -239,8 +239,6 @@ def create_handler() -> Type[BaseHTTPRequestHandler]:
                     request_ctx["state_sync_overhead_ms"] = (
                         get_state_runtime().get_sync_metrics().get("total_ms", 0.0)
                     )
-                if hasattr(result, 'to_dict'):
-                    result = result.to_dict(orient="records")
             except Exception as e:
                 status = 500
                 breakdown = _build_function_breakdown_payload(

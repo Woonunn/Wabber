@@ -230,3 +230,5 @@ Analyzer v2 writes three artifacts under `results/<provider>/<benchmark>/`:
 the normalized `schema_version=2` report, and `*.evidence.jsonl` for full raw
 provider evidence collected from SLS, CloudWatch, Cloud Logging, or Gateway
 observability.
+
+Stage 9 多 Workload 路由实验接入、复现命令及当前验收缺口见 [experiments/e3/README.md](experiments/e3/README.md)。

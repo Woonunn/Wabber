@@ -13,7 +13,13 @@ from benchmarks.DataSciBench.langgraph_agent.trace_replayer import ReplayModel
 ROOT=Path(__file__).resolve().parents[3]
 
 
-async def run(task_id,config,output,capture=None,workload_model=None,provider_model=None,provider_context=None,*,calibration=False,router=None,routing_context=None,prompt=None,manifest=None,arrival_ns=None):
+async def run(task_id,config,output,capture=None,workload_model=None,provider_model=None,provider_context=None,*,calibration=False,router=None,routing_context=None,prompt=None,manifest=None,arrival_ns=None,workload="DataSciBench"):
+    if workload not in {'DataSciBench','TravelPlanner','ClaudeCodeReview','ScientificComputation'}:
+        raise ValueError('Unknown LangGraph workload')
+    if workload != 'DataSciBench' and manifest is None:
+        raise ValueError('A workload task manifest is required')
+    if workload != 'DataSciBench' and (calibration or prompt is not None):
+        raise ValueError('E3 uses sealed prompts and strict business-result Replay')
     if router is not None:
         if workload_model is not None or provider_model is not None:
             raise ValueError('Router owns both model completion hooks')
@@ -44,7 +50,8 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
         task={**task,'prompt':prompt,'prompt_sha256':hashlib.sha256(prompt.encode()).hexdigest()}
     from atsuite.workload import describe
     descriptor=describe(prompt=task['prompt'],files=task['readiness']['inputs']['files'],
-                        tools=['prepare_workspace','execute_analysis','merge_artifacts','validate_result'])
+                        tools=['prepare_workspace','execute_analysis','merge_artifacts','validate_result'] if workload=='DataSciBench' else [d['name'] for d in task['tool_definitions']],
+                        category=workload)
     session_id=uuid.uuid4().hex;request_id=uuid.uuid4().hex
     if router is not None:request_id=routing_context.get('request_id',request_id)
     tracing=LangGraphTracingAdapter(TraceCollector(request_id,session_id,output))
@@ -60,16 +67,18 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
         write_json(output/'workload_prediction.json',prediction)
     if provider_model is not None:
         from atsuite.tracing.storage import write_json
-        workload=provider_context.get('reference_profile')
-        if workload is None:workload=prediction if workload_model is not None else []
+        reference_workload=provider_context.get('reference_profile')
+        if reference_workload is None:reference_workload=prediction if workload_model is not None else []
         write_json(output/'provider_prediction.json',provider_model.predict(
-            workload,[provider_context['pool']],provider_context['load_rps'],as_of_ns=arrival_ns))
-    tools=model=None;state=initial
+            reference_workload,[provider_context['pool']],provider_context['load_rps'],as_of_ns=arrival_ns))
+    tools=model=None;state=initial;sessions_closed=False
     try:
         if router is not None:
             decision=router.decide(request_id,task_id,routing_context['load_rps'],as_of_ns=time.time_ns(),arrival_ns=arrival_ns,
                                    shadow=routing_context.get('shadow',False),
-                                   pool_load_rps=routing_context.get('pool_load_rps'),descriptor=descriptor)
+                                   pool_load_rps=routing_context.get('pool_load_rps'),descriptor=descriptor,
+                                   allowed_pools=routing_context.get('allowed_pools'),
+                                   **({'fallback_pool':routing_context['fallback_pool']} if routing_context.get('fallback_pool') else {}))
             from atsuite.tracing.storage import write_json
             write_json(output/'routing_decision.json',decision)
             if not decision['shadow']:
@@ -77,11 +86,23 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
                 target=routing_context['targets'][decision['selected']]
                 config={**config,'tool':target['tool']}
                 capture=target.get('capture',capture)
-        recorder.emit('run_start',mode='environment_reference' if calibration else 'replay' if capture else 'capture',task_id=task_id,prompt_sha256=task['prompt_sha256'],
+        recorder.emit('run_start',workload=workload,mode='environment_reference' if calibration else 'replay' if capture else 'capture',task_id=task_id,prompt_sha256=task['prompt_sha256'],
              config=config,source_capture=str(capture) if capture else None,execution_scope=config['tool']['execution_scope'])
-        tools=await asyncio.to_thread(ToolClient,config['tool'],recorder,capture,calibration)
-        model=ReplayModel(capture,recorder,tools.comparable,calibration) if capture else DeepSeekClient(recorder,config['model'])
-        graph=build_graph(model,tools,recorder,task['output_files'],config['max_iterations'],config['model']['seed'],task.get('validation_contract'),task.get('task_type')=='bcb')
+        from experiments.e3.agent import result_view
+        equality={}
+        if workload=='ScientificComputation':
+            from benchmarks.ScientificComputation.langgraph_agent.graph import numeric_equal
+            equality={'result_equal':numeric_equal}
+        tools=await asyncio.to_thread(ToolClient,config['tool'],recorder,capture,calibration,
+                                      **({'result_view':result_view,**equality} if workload!='DataSciBench' else {}))
+        model=ReplayModel(capture,recorder,tools.comparable,calibration,**({'input_equal':numeric_equal} if workload=='ScientificComputation' else {})) if capture else DeepSeekClient(recorder,config['model'])
+        if workload!='DataSciBench' and not capture:model.tool_definitions=task['tool_definitions']
+        if workload=='DataSciBench':
+            graph=build_graph(model,tools,recorder,task['output_files'],config['max_iterations'],config['model']['seed'],task.get('validation_contract'),task.get('task_type')=='bcb')
+        else:
+            import importlib
+            builder=importlib.import_module(f'benchmarks.{workload}.langgraph_agent.graph').build_graph
+            graph=builder(model,tools,task,config['max_iterations'])
         timeout=config.get('session_timeout_s',900)
         if router is not None and decision.get('execution_bounds'):
             timeout=min(timeout,decision['execution_bounds']['timeout_s']-(time.time_ns()-arrival_ns)/1e9)
@@ -97,7 +118,9 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
         raise
     finally:
         try:
-            if tools:await tools.aclose()
+            if tools:
+                await tools.aclose()
+                sessions_closed=True
         except BaseException as exc:
             state={**state,'status':'failed','error':{'type':type(exc).__name__,'message':str(exc)}}
             recorder.emit('run_error',error_type=type(exc).__name__,error=str(exc),phase='session_close')
@@ -110,6 +133,7 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
             from atsuite.workload import extract_profile
             trace=tracing.collector.snapshot()
             trace.update(arrival_ns=arrival_ns,completed_ns=time.time_ns(),
+                         sessions_closed=sessions_closed,
                          request_status='success' if state['status']=='complete' else 'failed')
             profile=workload_model.observe(trace,descriptor=descriptor) if workload_model is not None else extract_profile(trace)
             write_json(output/'workload_profile.json',profile)
@@ -129,6 +153,7 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--task',required=True)
     p.add_argument('--config',type=Path,default=ROOT/'benchmarks/DataSciBench/config/langgraph_experiment.json')
     p.add_argument('--output',type=Path);p.add_argument('--replay',type=Path)
+    p.add_argument('--workload',choices=['DataSciBench','TravelPlanner','ClaudeCodeReview','ScientificComputation'],default='DataSciBench')
     p.add_argument('--manifest',type=Path,help='Independent prepared task manifest (default: six-task manifest)')
     p.add_argument('--workload-model',type=Path,help='Load/update an empirical workload snapshot')
     p.add_argument('--provider-model',type=Path,help='Load/update provider observations at request completion')
@@ -143,7 +168,7 @@ def main():
     provider_model=(ProviderModel.load(a.provider_model) if trace_path(a.provider_model).exists() else ProviderModel()) if a.provider_model else None
     provider_context=json.loads(a.provider_context.read_text()) if a.provider_context else None
     try:
-        print(json.dumps(asyncio.run(run(a.task,config,output,a.replay,model,provider_model,provider_context,manifest=a.manifest)),ensure_ascii=False))
+        print(json.dumps(asyncio.run(run(a.task,config,output,a.replay,model,provider_model,provider_context,manifest=a.manifest,workload=a.workload)),ensure_ascii=False))
     finally:
         if model is not None:model.save(a.workload_model)
         if provider_model is not None:provider_model.save(a.provider_model)

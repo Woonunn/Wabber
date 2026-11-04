@@ -198,7 +198,7 @@ class JointController:
             result = self.router.complete(request_id, trace, **kwargs)
             if request_id in self.release_holds and bound:
                 self.active[request_id] = bound
-            elif bound:
+            elif bound and not trace.get("sessions_closed"):
                 retention = session_retention_s(result["pool"])
                 if retention:
                     self.active[request_id] = bound

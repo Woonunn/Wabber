@@ -1,0 +1,273 @@
+{
+  "nodes": [
+    {
+      "name": "Tools",
+      "dir": "./nodes/Tools",
+      "trace_names": [
+        {
+          "name": "accommodations_run_for_annotation",
+          "tool": "accommodations_run_for_annotation"
+        },
+        {
+          "name": "attractions_run_for_annotation",
+          "tool": "attractions_run_for_annotation"
+        },
+        {
+          "name": "cities_run",
+          "tool": "cities_run"
+        },
+        {
+          "name": "flights_run_for_annotation",
+          "tool": "flights_run_for_annotation"
+        },
+        {
+          "name": "glob_files",
+          "tool": "glob_files"
+        },
+        {
+          "name": "googledistancematrix_run",
+          "tool": "googledistancematrix_run"
+        },
+        {
+          "name": "grep_text",
+          "tool": "grep_text"
+        },
+        {
+          "name": "ls",
+          "tool": "ls"
+        },
+        {
+          "name": "notebook_list",
+          "tool": "notebook_list"
+        },
+        {
+          "name": "notebook_read",
+          "tool": "notebook_read"
+        },
+        {
+          "name": "notebook_write",
+          "tool": "notebook_write"
+        },
+        {
+          "name": "read_file",
+          "tool": "read_file"
+        },
+        {
+          "name": "repo_git_blame_range",
+          "tool": "repo_git_blame_range"
+        },
+        {
+          "name": "repo_git_diff_between_refs",
+          "tool": "repo_git_diff_between_refs"
+        },
+        {
+          "name": "repo_git_get_patch",
+          "tool": "repo_git_get_patch"
+        },
+        {
+          "name": "repo_git_get_pr_overview",
+          "tool": "repo_git_get_pr_overview"
+        },
+        {
+          "name": "repo_git_list_changed_files",
+          "tool": "repo_git_list_changed_files"
+        },
+        {
+          "name": "repo_git_list_pull_requests",
+          "tool": "repo_git_list_pull_requests"
+        },
+        {
+          "name": "repo_git_log_for_path",
+          "tool": "repo_git_log_for_path"
+        },
+        {
+          "name": "repo_git_select_repository",
+          "tool": "repo_git_select_repository"
+        },
+        {
+          "name": "repo_git_show_commit",
+          "tool": "repo_git_show_commit"
+        },
+        {
+          "name": "repo_git_show_file_at_ref",
+          "tool": "repo_git_show_file_at_ref"
+        },
+        {
+          "name": "restaurants_run_for_annotation",
+          "tool": "restaurants_run_for_annotation"
+        },
+        {
+          "name": "scicom_add_matrices",
+          "tool": "scicom_add_matrices"
+        },
+        {
+          "name": "scicom_change_basis",
+          "tool": "scicom_change_basis"
+        },
+        {
+          "name": "scicom_compute_eigen",
+          "tool": "scicom_compute_eigen"
+        },
+        {
+          "name": "scicom_create_tensor",
+          "tool": "scicom_create_tensor"
+        },
+        {
+          "name": "scicom_delete_tensor",
+          "tool": "scicom_delete_tensor"
+        },
+        {
+          "name": "scicom_determinant",
+          "tool": "scicom_determinant"
+        },
+        {
+          "name": "scicom_find_orthonormal_basis",
+          "tool": "scicom_find_orthonormal_basis"
+        },
+        {
+          "name": "scicom_list_tensor_names",
+          "tool": "scicom_list_tensor_names"
+        },
+        {
+          "name": "scicom_matrix_inverse",
+          "tool": "scicom_matrix_inverse"
+        },
+        {
+          "name": "scicom_multiply_matrices",
+          "tool": "scicom_multiply_matrices"
+        },
+        {
+          "name": "scicom_qr_decompose",
+          "tool": "scicom_qr_decompose"
+        },
+        {
+          "name": "scicom_rank",
+          "tool": "scicom_rank"
+        },
+        {
+          "name": "scicom_scale_matrix",
+          "tool": "scicom_scale_matrix"
+        },
+        {
+          "name": "scicom_subtract_matrices",
+          "tool": "scicom_subtract_matrices"
+        },
+        {
+          "name": "scicom_svd_decompose",
+          "tool": "scicom_svd_decompose"
+        },
+        {
+          "name": "scicom_transpose",
+          "tool": "scicom_transpose"
+        },
+        {
+          "name": "scicom_vector_cross_product",
+          "tool": "scicom_vector_cross_product"
+        },
+        {
+          "name": "scicom_vector_dot_product",
+          "tool": "scicom_vector_dot_product"
+        },
+        {
+          "name": "scicom_vector_project",
+          "tool": "scicom_vector_project"
+        },
+        {
+          "name": "scicom_view_tensor",
+          "tool": "scicom_view_tensor"
+        },
+        {
+          "name": "todo_write",
+          "tool": "todo_write"
+        }
+      ]
+    }
+  ],
+  "pipeline": {
+    "faas": {
+      "build": {
+        "python_version": "3.12.12",
+        "base_image": "python:3.12.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c"
+      },
+      "units": [
+        {
+          "name": "E3AliAgentrun",
+          "node": "Tools",
+          "trace_names": [
+            "accommodations_run_for_annotation",
+            "attractions_run_for_annotation",
+            "cities_run",
+            "flights_run_for_annotation",
+            "glob_files",
+            "googledistancematrix_run",
+            "grep_text",
+            "ls",
+            "notebook_list",
+            "notebook_read",
+            "notebook_write",
+            "read_file",
+            "repo_git_blame_range",
+            "repo_git_diff_between_refs",
+            "repo_git_get_patch",
+            "repo_git_get_pr_overview",
+            "repo_git_list_changed_files",
+            "repo_git_list_pull_requests",
+            "repo_git_log_for_path",
+            "repo_git_select_repository",
+            "repo_git_show_commit",
+            "repo_git_show_file_at_ref",
+            "restaurants_run_for_annotation",
+            "scicom_add_matrices",
+            "scicom_change_basis",
+            "scicom_compute_eigen",
+            "scicom_create_tensor",
+            "scicom_delete_tensor",
+            "scicom_determinant",
+            "scicom_find_orthonormal_basis",
+            "scicom_list_tensor_names",
+            "scicom_matrix_inverse",
+            "scicom_multiply_matrices",
+            "scicom_qr_decompose",
+            "scicom_rank",
+            "scicom_scale_matrix",
+            "scicom_subtract_matrices",
+            "scicom_svd_decompose",
+            "scicom_transpose",
+            "scicom_vector_cross_product",
+            "scicom_vector_dot_product",
+            "scicom_vector_project",
+            "scicom_view_tensor",
+            "todo_write"
+          ],
+          "deploy": {
+            "cpu": 2,
+            "memory": 3072,
+            "disk": 10240,
+            "timeout": 240
+          }
+        }
+      ]
+    },
+    "mcp_serverless": {
+      "build": {
+        "python_version": "3.12.12",
+        "base_image": "python:3.12.12-slim@sha256:f3fa41d74a768c2fce8016b98c191ae8c1bacd8f1152870a3f9f87d350920b7c"
+      },
+      "servers": [
+        {
+          "name": "E3AliAgentrun",
+          "nodes": [
+            "Tools"
+          ],
+          "deploy": {
+            "cpu": 2,
+            "memory": 3072,
+            "disk": 10240,
+            "timeout": 240
+          }
+        }
+      ]
+    }
+  },
+  "trace_file": "./trace/pilot.atg.json"
+}

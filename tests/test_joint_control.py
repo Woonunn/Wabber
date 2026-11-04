@@ -265,6 +265,11 @@ class AdapterTests(unittest.TestCase):
         self.assertEqual(control._occupied("ali"), 1)
         control.expire_retained(3_000_030_000)
         self.assertEqual(control._occupied("ali"), 0)
+        router.decide("closed", "task", 0.5, as_of_ns=3_000_040_000)
+        completed = {**trace("closed", arrival=3_000_040_000, end=3_000_050_000), "sessions_closed": True}
+        control.complete("closed", completed, available_ns=3_000_050_000)
+        self.assertEqual(control._occupied("ali"), 0)
+        self.assertNotIn("closed", control.retained_until)
 
     def test_lambda_quota_is_not_instances_and_shrink_is_guarded(self):
         client = Mock()

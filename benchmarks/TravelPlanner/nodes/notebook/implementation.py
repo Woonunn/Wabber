@@ -1,13 +1,12 @@
 import json
-from io import StringIO
-from pathlib import Path
 import shutil
+from pathlib import Path
 
-import pandas as pd
 from pandas import DataFrame
 
 from atsuite_sdk.abstract import registry
 from atsuite_sdk.state import register_state_object, session_open, session_path
+
 
 class Notebook:
     def __init__(self) -> None:
@@ -81,15 +80,27 @@ class Notebook:
 
 notebook = register_state_object("notebook", Notebook(), session_scoped=True)
 
+
+def _read_records(input_data: str) -> DataFrame:
+    try:
+        records = json.loads(input_data)
+    except (ValueError, TypeError) as exc:
+        raise ValueError('Notebook input_data must be a JSON array of objects, e.g. [{"note":"text"}]') from exc
+    if not isinstance(records, list) or any(not isinstance(record, dict) for record in records):
+        raise ValueError('Notebook input_data must be a JSON array of objects')
+    return DataFrame(records)
+
+
 @registry.tool(stateful=True)
 def notebook_write(input_data: str, short_description: str):
-    df = pd.read_json(StringIO(input_data), orient="records")
+    """Save query results; input_data must be a JSON-encoded array of record objects."""
+    df = _read_records(input_data)
     return notebook.write(df, short_description)
 
 
 @registry.tool(stateful=True)
 def notebook_update(input_data: str, index: int, short_description: str):
-    df = pd.read_json(StringIO(input_data), orient="records")
+    df = _read_records(input_data)
     return notebook.update(df, index, short_description)
 
 

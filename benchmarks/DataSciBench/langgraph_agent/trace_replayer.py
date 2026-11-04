@@ -5,7 +5,8 @@ from atsuite.tracing.storage import read_text
 
 
 class ReplayModel:
-    def __init__(self,capture,recorder,normalizer=None,calibration=False):
+    def __init__(self,capture,recorder,normalizer=None,calibration=False,*,input_equal=None):
+        self.input_equal=input_equal or (lambda left,right:left==right)
         self.calibration=calibration
         self.normalizer=normalizer
         if json.loads(read_text(Path(capture)/'result.json')).get('status')!='complete':
@@ -25,7 +26,7 @@ class ReplayModel:
                 except (ValueError,TypeError):result.append(item)
                 else:result.append({**item,'content':self.normalizer(content)})
             return result
-        if not self.calibration and input_view(messages)!=input_view(event['request']['messages']):raise ValueError('Replay LLM inputs diverged from Capture')
+        if not self.calibration and not self.input_equal(input_view(messages),input_view(event['request']['messages'])):raise ValueError('Replay LLM inputs diverged from Capture')
         if self.calibration:
             event={**event,'request':{**event['request'],'messages':messages}}
         if messages!=event['request']['messages']:self.recorder.emit('replay_input_equivalence',phase=phase,iteration=iteration,messages=messages,basis='sealed calibrated rendering digests; original model decision unchanged')

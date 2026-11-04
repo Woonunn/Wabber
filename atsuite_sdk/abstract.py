@@ -85,6 +85,8 @@ class UnifiedAgentTool:
             result = self.func(**call_args)
             if inspect.isawaitable(result):
                 result = asyncio.run(result)
+            if hasattr(result, "to_dict"):
+                result = result.to_dict(orient="records")
             return result
 
 # --- 装饰器 ---

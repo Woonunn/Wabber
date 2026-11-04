@@ -1,10 +1,15 @@
 import json
+import os
+import re
+import time
+from pathlib import Path
 from typing import Annotated, Any, Optional
 
 import numpy as np
 from pydantic import Field
 
 from atsuite_sdk.abstract import registry
+from atsuite_sdk.events import emit_event
 from atsuite_sdk.state import register_state_object
 
 
@@ -74,150 +79,6 @@ def _store_named_tensors(outputs: dict[str, Any]) -> None:
         _store_tensor_if_requested(output_name, value)
 
 
-def _run_heavy_matrix_product_checks(matrix: Any, iterations: int = 10) -> None:
-    working = np.asarray(matrix, dtype=float)
-    if working.ndim != 2:
-        return
-
-    with np.errstate(over="ignore", invalid="ignore"):
-        gram_left = working.T @ working
-        gram_right = working @ working.T
-        for _ in range(iterations):
-            gram_left = gram_left @ gram_left
-            gram_right = gram_right @ gram_right
-            if not np.all(np.isfinite(gram_left)) or not np.all(
-                np.isfinite(gram_right)
-            ):
-                break
-
-            left_norm = np.linalg.norm(gram_left, ord="fro")
-            right_norm = np.linalg.norm(gram_right, ord="fro")
-            if not np.isfinite(left_norm) or not np.isfinite(right_norm):
-                break
-            if left_norm > 0:
-                gram_left = gram_left / left_norm
-            if right_norm > 0:
-                gram_right = gram_right / right_norm
-
-            _ = np.linalg.norm(gram_left, ord="fro")
-            _ = np.linalg.norm(gram_right, ord="fro")
-
-
-def _run_heavy_inverse_checks(matrix: Any, inverse: Any, iterations: int = 10) -> None:
-    source = np.asarray(matrix, dtype=float)
-    candidate = np.asarray(inverse, dtype=float)
-    if source.ndim != 2 or source.shape[0] != source.shape[1]:
-        return
-
-    identity = np.eye(source.shape[0], dtype=float)
-    with np.errstate(over="ignore", invalid="ignore"):
-        refined = candidate.copy()
-        for _ in range(iterations):
-            residual = identity - source @ refined
-            if not np.all(np.isfinite(residual)):
-                break
-
-            correction = refined @ residual
-            if not np.all(np.isfinite(correction)):
-                break
-
-            refined = refined + correction
-            _ = np.linalg.norm(residual, ord="fro")
-            _ = np.linalg.norm(refined, ord="fro")
-
-
-def _run_heavy_eigen_checks(
-    matrix: Any,
-    eigenvalues: Any,
-    eigenvectors: Any,
-    iterations: int = 10,
-) -> None:
-    source = np.asarray(matrix, dtype=float)
-    diagonal = np.diag(np.asarray(eigenvalues, dtype=float))
-    vectors = np.asarray(eigenvectors, dtype=float)
-    with np.errstate(over="ignore", invalid="ignore"):
-        for _ in range(iterations):
-            lhs = source @ vectors
-            rhs = vectors @ diagonal
-            if not np.all(np.isfinite(lhs)) or not np.all(np.isfinite(rhs)):
-                break
-
-            residual = lhs - rhs
-            if not np.all(np.isfinite(residual)):
-                break
-
-            _ = np.linalg.norm(residual, ord="fro")
-            _ = np.linalg.norm(lhs, ord="fro")
-            _ = np.linalg.norm(rhs, ord="fro")
-
-
-def _run_heavy_qr_checks(matrix: Any, q: Any, r: Any, iterations: int = 10) -> None:
-    source = np.asarray(matrix, dtype=float)
-    q_matrix = np.asarray(q, dtype=float)
-    r_matrix = np.asarray(r, dtype=float)
-    identity = np.eye(q_matrix.shape[1], dtype=float)
-    with np.errstate(over="ignore", invalid="ignore"):
-        for _ in range(iterations):
-            orthogonality = q_matrix.T @ q_matrix - identity
-            reconstruction = q_matrix @ r_matrix - source
-            if not np.all(np.isfinite(orthogonality)) or not np.all(
-                np.isfinite(reconstruction)
-            ):
-                break
-
-            _ = np.linalg.norm(orthogonality, ord="fro")
-            _ = np.linalg.norm(reconstruction, ord="fro")
-            _ = np.linalg.norm(r_matrix.T @ r_matrix, ord="fro")
-
-
-def _run_heavy_svd_checks(
-    matrix: Any, u: Any, s: Any, v_t: Any, iterations: int = 10
-) -> None:
-    source = np.asarray(matrix, dtype=float)
-    left = np.asarray(u, dtype=float)
-    singular = np.diag(np.asarray(s, dtype=float))
-    right = np.asarray(v_t, dtype=float)
-    with np.errstate(over="ignore", invalid="ignore"):
-        for _ in range(iterations):
-            reconstruction = left @ singular @ right
-            if not np.all(np.isfinite(reconstruction)):
-                break
-
-            _ = np.linalg.norm(reconstruction - source, ord="fro")
-            _ = np.linalg.norm(left.T @ left, ord="fro")
-            _ = np.linalg.norm(right @ right.T, ord="fro")
-
-            singular_norm = np.linalg.norm(singular, ord="fro")
-            if np.isfinite(singular_norm) and singular_norm > 0:
-                singular = singular / singular_norm
-
-
-def _run_heavy_change_basis_checks(
-    matrix: Any,
-    basis: Any,
-    transformed: Any,
-    iterations: int = 10,
-) -> None:
-    source = np.asarray(matrix, dtype=float)
-    change = np.asarray(basis, dtype=float)
-    current = np.asarray(transformed, dtype=float)
-    if source.ndim != 2 or change.ndim != 2 or current.ndim != 2:
-        return
-
-    with np.errstate(over="ignore", invalid="ignore"):
-        inverse_basis = np.linalg.inv(change)
-        for _ in range(iterations):
-            reconstructed = change @ current @ inverse_basis
-            if not np.all(np.isfinite(reconstructed)):
-                break
-
-            _ = np.linalg.norm(reconstructed - source, ord="fro")
-            _ = np.linalg.norm(current.T @ current, ord="fro")
-            trace_gap = np.trace(reconstructed) - np.trace(source)
-            if not np.isfinite(trace_gap):
-                break
-
-
 @registry.tool(stateful=True)
 def scicom_create_tensor(
     shape: Annotated[
@@ -248,6 +109,30 @@ def scicom_view_tensor(name: str, uid: Optional[str] = None) -> str:
         return _success(tensor_workspace.load(name), tensor_name=name)
     except Exception as exc:
         return _error("scicom_view_tensor", exc, tensor_name=name)
+
+
+@registry.tool(stateful=True)
+def scicom_load_tensor(problem: str, tensor: str, name: str, uid: Optional[str] = None) -> str:
+    """Load A or B from an immutable problem input into the tensor workspace, returning its shape."""
+    try:
+        if not re.fullmatch(r"[a-z0-9-]+", problem) or tensor not in {"A", "B"}:
+            raise ValueError("Unknown problem input")
+        root = Path(os.environ["ATSUITE_SCIENTIFIC_PROBLEMS"]).resolve()
+        path = (root / (problem + ".json")).resolve()
+        path.relative_to(root)
+        if path.exists():
+            value = np.asarray(json.loads(path.read_text())[tensor], dtype=float)
+        else:
+            path = (root / (problem + ".npz")).resolve()
+            path.relative_to(root)
+            with np.load(path, allow_pickle=False) as inputs:
+                value = np.asarray(inputs[tensor], dtype=float)
+        if value.ndim != 2 or not np.isfinite(value).all():
+            raise ValueError("Problem input must be a finite matrix")
+        tensor_workspace.save(name, value)
+        return _success({"tensor_name": name, "shape": list(value.shape)})
+    except Exception as exc:
+        return _error("scicom_load_tensor", exc)
 
 
 @registry.tool(access="r")
@@ -306,16 +191,14 @@ def scicom_multiply_matrices(
     name_b: str,
     output_name: Optional[str] = None,
     uid: Optional[str] = None,
+    summary_only: bool = False,
 ) -> str:
     try:
+        if summary_only and not output_name:
+            raise ValueError("Summary output requires a stored tensor name")
         result = np.matmul(tensor_workspace.load(name_a), tensor_workspace.load(name_b))
-        try:
-            _run_heavy_matrix_product_checks(result.tolist())
-        except Exception:
-            # Benchmark-only heavy checks must not change matrix multiplication semantics.
-            pass
         _store_tensor_if_requested(output_name, result)
-        return _success(result, tool="scicom_multiply_matrices")
+        return _success({"tensor_name": output_name, "shape": list(result.shape)} if summary_only else result, tool="scicom_multiply_matrices")
     except Exception as exc:
         return _error("scicom_multiply_matrices", exc)
 
@@ -343,17 +226,15 @@ def scicom_matrix_inverse(
     name: str,
     output_name: Optional[str] = None,
     uid: Optional[str] = None,
+    summary_only: bool = False,
 ) -> str:
     try:
+        if summary_only and not output_name:
+            raise ValueError("Summary output requires a stored tensor name")
         matrix = tensor_workspace.load(name)
         result = np.linalg.inv(matrix)
-        try:
-            _run_heavy_inverse_checks(matrix, result)
-        except Exception:
-            # Benchmark-only heavy checks must not change matrix inverse semantics.
-            pass
         _store_tensor_if_requested(output_name, result)
-        return _success(result, tool="scicom_matrix_inverse")
+        return _success({"tensor_name": output_name, "shape": list(result.shape)} if summary_only else result, tool="scicom_matrix_inverse")
     except Exception as exc:
         return _error("scicom_matrix_inverse", exc)
 
@@ -387,12 +268,6 @@ def scicom_rank(name: str, uid: Optional[str] = None) -> str:
     try:
         matrix = tensor_workspace.load(name)
         _, singular_values, _ = np.linalg.svd(matrix, full_matrices=False)
-        try:
-            _, verification_values, _ = np.linalg.svd(matrix, full_matrices=False)
-            _ = np.linalg.norm(singular_values - verification_values, ord=2)
-        except Exception:
-            pass
-
         if singular_values.size == 0:
             result = 0
         else:
@@ -415,10 +290,6 @@ def scicom_compute_eigen(
     try:
         matrix = tensor_workspace.load(name)
         eigenvalues, eigenvectors = np.linalg.eig(matrix)
-        try:
-            _run_heavy_eigen_checks(matrix, eigenvalues, eigenvectors)
-        except Exception:
-            pass
         _store_named_tensors(
             {
                 eigenvalues_output_name or "": eigenvalues,
@@ -443,10 +314,6 @@ def scicom_qr_decompose(
     try:
         matrix = tensor_workspace.load(name)
         q, r = np.linalg.qr(matrix)
-        try:
-            _run_heavy_qr_checks(matrix, q, r)
-        except Exception:
-            pass
         _store_named_tensors(
             {
                 q_output_name or "": q,
@@ -479,14 +346,17 @@ def scicom_svd_decompose(
     s_output_name: Optional[str] = None,
     v_t_output_name: Optional[str] = None,
     uid: Optional[str] = None,
+    summary_only: bool = False,
 ) -> str:
+    """Compute and retain an SVD; summary_only avoids returning large factors to the LLM."""
     try:
+        if summary_only and not all((u_output_name, s_output_name, v_t_output_name)):
+            raise ValueError("summary_only requires names for all three stored factors")
         matrix = tensor_workspace.load(name)
+        started = time.perf_counter()
         u, s, v_t = np.linalg.svd(matrix)
-        try:
-            _run_heavy_svd_checks(matrix, u, s, v_t)
-        except Exception:
-            pass
+        emit_event("scientific_factorization", uid=uid, tensor=name, shape=list(matrix.shape),
+                   algorithm="numpy.linalg.svd", compute_s=time.perf_counter() - started)
         _store_named_tensors(
             {
                 u_output_name or "": u,
@@ -494,9 +364,37 @@ def scicom_svd_decompose(
                 v_t_output_name or "": v_t,
             }
         )
-        return _success({"u": u, "s": s, "v_t": v_t}, tool="scicom_svd_decompose")
+        result = (
+            {"u_shape": list(u.shape), "s_shape": list(s.shape), "v_t_shape": list(v_t.shape)}
+            if summary_only else {"u": u, "s": s, "v_t": v_t}
+        )
+        return _success(result, tool="scicom_svd_decompose")
     except Exception as exc:
         return _error("scicom_svd_decompose", exc)
+
+
+@registry.tool(stateful=True)
+def scicom_solve_from_svd(
+    u_name: str,
+    s_name: str,
+    v_t_name: str,
+    rhs_name: str,
+    output_name: str,
+    uid: Optional[str] = None,
+) -> str:
+    """Reuse stored SVD factors to solve a full-rank system for multiple response vectors."""
+    try:
+        u, s, vt, rhs = (tensor_workspace.load(n) for n in (u_name, s_name, v_t_name, rhs_name))
+        if s.ndim != 1 or rhs.ndim != 2 or rhs.shape[0] != u.shape[0]:
+            raise ValueError("Incompatible factor or response shapes")
+        if not np.isfinite(s).all() or np.any(s <= np.finfo(float).eps * max(u.shape) * s.max()):
+            raise ValueError("The system must have full numerical rank")
+        rank = len(s)
+        solution = vt[:rank].T @ ((u[:, :rank].T @ rhs) / s[:, None])
+        tensor_workspace.save(output_name, solution)
+        return _success({"tensor_name": output_name, "shape": list(solution.shape)})
+    except Exception as exc:
+        return _error("scicom_solve_from_svd", exc)
 
 
 @registry.tool(stateful=True)
@@ -510,10 +408,6 @@ def scicom_change_basis(
         matrix = tensor_workspace.load(name)
         basis = np.asarray(new_basis, dtype=float)
         result = np.linalg.inv(basis) @ matrix @ basis
-        try:
-            _run_heavy_change_basis_checks(matrix, basis, result)
-        except Exception:
-            pass
         _store_tensor_if_requested(output_name, result)
         return _success(result, tool="scicom_change_basis")
     except Exception as exc:

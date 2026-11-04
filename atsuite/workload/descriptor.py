@@ -156,7 +156,13 @@ def resource_distance(left: dict, right: dict) -> float:
 
 def distance(left: dict, right: dict) -> float:
     """Recognize an observed intent combination, then compare its resource scale."""
+    if left["category"] != right["category"]:
+        return 1.0
     a, b = left.get("semantic"), right.get("semantic")
+    if (left["category"] and a and b and a["primary"] == b["primary"] == "unknown"
+            and set(left["tools"]) == set(right["tools"])
+            and set(left["file_types"]) == set(right["file_types"])):
+        return resource_distance(left, right)
     if a is None and b is None:
         return legacy_distance(left, right)
     if (

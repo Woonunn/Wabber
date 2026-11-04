@@ -1,4 +1,4 @@
-from atsuite.analysis.api import AnalyzeOptions, analyze_events, analyze_recorder
+from atsuite.analysis.api import AnalyzeOptions, analyze_events, analyze_recorder, price_metrics
 from atsuite.analysis.model import (
     AnalysisReport,
     CostLineItem,
@@ -31,4 +31,5 @@ __all__ = [
     "TimelineEvent",
     "analyze_events",
     "analyze_recorder",
+    "price_metrics",
 ]

@@ -29,11 +29,11 @@ class _SimpleImage:
 
 
 def _effective_plot_grid(grid: int) -> int:
-    return max(int(grid), 200) * 3
+    return max(int(grid), 2)
 
 
 def _effective_vector_field_density(n: int) -> int:
-    return max(int(n), 10) * 2
+    return max(int(n), 2)
 
 
 def _plot_vector_field(
@@ -95,8 +95,6 @@ def _plot_function(
         f_num = sp.lambdify(_X, expr, modules=["numpy"])
         xs = np.linspace(xlim[0], xlim[1], effective_grid)
         ys = np.asarray(f_num(xs), dtype=float)
-        if ys.ndim > 0 and ys.size > 1:
-            _ = np.gradient(ys, xs)
         fig = Figure()
         ax = fig.add_subplot()
         ax.plot(xs, ys)
@@ -111,8 +109,6 @@ def _plot_function(
         ys = np.linspace(ylim[0], ylim[1], effective_grid) if ylim is not None else xs
         X, Y = np.meshgrid(xs, ys)
         Z = np.asarray(f_num(X, Y), dtype=float)
-        grad_x, grad_y = np.gradient(Z)
-        _ = np.sqrt(grad_x * grad_x + grad_y * grad_y)
         fig = Figure()
         ax = fig.add_subplot(projection="3d")
         surface = ax.plot_surface(X, Y, Z, cmap="viridis")

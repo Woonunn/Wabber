@@ -50,8 +50,8 @@ class AliPricingPolicy(BasePricingPolicy):
     def _ali_parts(count: int, cpu: float, memory: float, disk: float, active_time_ms: float, idle_time_ms: float = 0.0, min_instance_time_ms: float = 0.0) -> Dict[str, float]:
         cu = count * 0.0075 + cpu * (active_time_ms / 1000) + (memory / 1024) * ((active_time_ms + idle_time_ms) / 1000) * 0.15
         disk_cu = 0.0
-        if disk > 512:
-            disk_cu = (disk / 1024) * (min_instance_time_ms / 1000) * 0.05
+        if disk > 10240:
+            disk_cu = ((disk - 10240) / 1024) * (min_instance_time_ms / 1000) * 0.05
             cu += disk_cu
         if cu <= 200000000:
             factor = 0.000088
@@ -71,16 +71,37 @@ class AliPricingPolicy(BasePricingPolicy):
     def price(self, context: RunContext, *, metrics: List[ProviderMetric], state: List[StateObservation]) -> List[CostLineItem]:
         items: List[CostLineItem] = []
         for metric in metrics:
-            if metric.provider != "ali":
+            if metric.provider not in ("ali", "ali_fc", "ali_agentrun"):
                 continue
             f = metric.fields
-            active_ms = _num(f.get("invoker_function_ms"), _num(f.get("duration_ms"), _num(f.get("elapsed_time_ms"))))
+            session_ms = f.get("session_duration_ms")
+            if metric.provider == "ali_agentrun" and session_ms is None:
+                continue
+            if session_ms is None:
+                active_ms = _num(f.get("invoker_function_ms"), _num(f.get("duration_ms"), _num(f.get("elapsed_time_ms"))))
+            else:
+                session_ms = _num(session_ms, math.nan)
+                active_ms = _num(
+                    next(
+                        (f[k] for k in ("duration_ms", "invoker_function_ms", "elapsed_time_ms") if f.get(k) is not None),
+                        None,
+                    ),
+                    math.nan,
+                )
+                if not math.isfinite(session_ms) or not math.isfinite(active_ms) or not 0 <= active_ms <= session_ms:
+                    raise ValueError("Session pricing requires finite durations with 0 <= active_ms <= session_ms")
+            active_ms = max(0.0, active_ms)
+            allocated_ms = session_ms if session_ms is not None else active_ms
+            # Idle sessions retain memory and disk, but do not incur vCPU charges.
+            idle_ms = allocated_ms - active_ms
             parts = self._ali_parts(
-                1,
+                int(f.get("request_count", 1)),
                 _num(f.get("cpu"), 1.0),
                 _num(f.get("memory"), 1024.0),
                 _num(f.get("disk"), 512.0),
-                max(0.0, active_ms),
+                active_ms,
+                idle_time_ms=idle_ms,
+                min_instance_time_ms=allocated_ms,
             )
             for category in ("request", "cpu", "memory", "disk"):
                 amount = parts[category]
@@ -89,12 +110,12 @@ class AliPricingPolicy(BasePricingPolicy):
                 items.append(
                     CostLineItem(
                         category=category,
-                        provider="ali",
+                        provider=metric.provider,
                         amount=amount,
                         currency=self.currency,
                         node_id=metric.node_id,
                         invocation_call_id=metric.invocation_call_id,
-                        formula=f"Ali FC {category} from active_ms={active_ms:.3f}",
+                        formula=f"Ali FC {category} from active_ms={active_ms:.3f}, idle_ms={idle_ms:.3f}",
                     )
                 )
         for obs in state:
@@ -155,7 +176,9 @@ class AWSLambdaPricingPolicy(BasePricingPolicy):
             seconds_per_month = 30 * 24 * 3600
             storage_cost = obs.size_gb * 0.023 * (duration_s / seconds_per_month)
             put_get_count = max(0, int(obs.operation_count or 0)) * 2
-            api_cost = put_get_count * (0.005 / 1000) + put_get_count * (0.0004 / 1000)
+            reads = obs.metadata.get("read_operations", put_get_count)
+            writes = obs.metadata.get("write_operations", put_get_count)
+            api_cost = writes * (0.005 / 1000) + reads * (0.0004 / 1000)
             amount = storage_cost + api_cost
             if amount > 0:
                 items.append(
