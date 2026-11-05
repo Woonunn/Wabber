@@ -5,7 +5,7 @@ from atsuite.tracing import TraceCollector
 from atsuite.tracing.langgraph import LangGraphTracingAdapter
 from dotenv import load_dotenv
 from benchmarks.DataSciBench.langgraph_agent.graph import build_graph
-from benchmarks.DataSciBench.langgraph_agent.model_client import DeepSeekClient
+from benchmarks.DataSciBench.langgraph_agent.model_client import create_model_client
 from benchmarks.DataSciBench.langgraph_agent.tool_client import ToolClient
 from benchmarks.DataSciBench.langgraph_agent.trace_recorder import TraceRecorder
 from benchmarks.DataSciBench.langgraph_agent.trace_replayer import ReplayModel
@@ -101,7 +101,7 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
             equality={'result_equal':numeric_equal}
         tools=await asyncio.to_thread(ToolClient,config['tool'],recorder,capture,calibration,
                                       **({'result_view':result_view,**equality} if workload!='DataSciBench' else {}))
-        model=ReplayModel(capture,recorder,tools.comparable,calibration,**({'input_equal':numeric_equal} if workload=='ScientificComputation' else {})) if capture else DeepSeekClient(recorder,config['model'])
+        model=ReplayModel(capture,recorder,tools.comparable,calibration,**({'input_equal':numeric_equal} if workload=='ScientificComputation' else {})) if capture else create_model_client(recorder,config['model'])
         if workload!='DataSciBench' and not capture:model.tool_definitions=task['tool_definitions']
         if workload=='DataSciBench':
             graph=build_graph(model,tools,recorder,task['output_files'],config['max_iterations'],config['model']['seed'],task.get('validation_contract'),task.get('task_type')=='bcb')
@@ -153,7 +153,7 @@ async def run(task_id,config,output,capture=None,workload_model=None,provider_mo
                 observation=router.complete(request_id,trace,actual_pool=routing_context.get('actual_pool')
                                             if routing_context.get('shadow') else None)
                 write_json(output/'provider_observation.json',observation)
-            if model and not capture:await model.client.close()
+            if model and not capture:await model.aclose()
 
 
 def main():

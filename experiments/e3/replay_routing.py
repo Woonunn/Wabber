@@ -7,6 +7,7 @@ import csv
 import hashlib
 import heapq
 import json
+import random
 import time
 from collections import Counter
 from decimal import Decimal
@@ -136,15 +137,32 @@ def build_router(config: dict, retrieval: dict, descriptors: dict) -> OnlineRout
     return router
 
 
-def replay(plan: dict, descriptors: dict, outcomes: dict, router, trace_loader, output: Path) -> list[dict]:
+def permute_arrivals(plan: dict, seed: int) -> dict:
+    """Hold request data and arrival slots fixed while testing a new causal order."""
+    result = copy.deepcopy(plan)
+    slots = [r["relative_arrival_ms"] for r in result["requests"]]
+    random.Random(seed).shuffle(result["requests"])
+    for request, slot in zip(result["requests"], slots):
+        request["relative_arrival_ms"] = slot
+    return result
+
+
+def replay(plan: dict, descriptors: dict, outcomes: dict, router, trace_loader, output: Path,
+           *, feedback_mode: str = "measured") -> list[dict]:
     """Process virtual arrivals before tied completions; reveal only selected feedback."""
+    if feedback_mode not in {"measured", "rounds"}:
+        raise ValueError("Unknown feedback protocol")
     output.mkdir(parents=True, exist_ok=False)
     events, rows = [], []
+    round_ready_ns = 0
     for index, request in enumerate(plan["requests"], 1):
         heapq.heappush(events, (1_000_000_000 + ms_ns(request["relative_arrival_ms"]), 0, index, request))
     while events:
         stamp, event, index, item = heapq.heappop(events)
         if event == 0:
+            if feedback_mode == "rounds" and stamp < round_ready_ns:
+                heapq.heappush(events, (round_ready_ns, event, index, item))
+                continue
             rid = item["arrival_id"]
             decision = router.decide(rid, None, len(plan["requests"]) / (plan["duration_ms"] / 1000),
                                      as_of_ns=stamp, arrival_ns=stamp, descriptor=descriptors[rid])
@@ -153,15 +171,25 @@ def replay(plan: dict, descriptors: dict, outcomes: dict, router, trace_loader, 
                 raise RuntimeError("No admissible pool; local replay stopped without inventing zero cost")
             chosen = outcomes[(rid, selected)]
             overhead = decision["prediction_overhead"]
-            completed = stamp + round((chosen["latency_s"] + overhead["total_latency_s"]) * 1e9)
+            selected_candidate = next((c for c in decision["candidates"] if c["key"] == selected), {})
+            predicted_cost = selected_candidate.get("cost") or {}
+            service_s = chosen["latency_s"] if feedback_mode == "measured" else 0
+            completed = stamp + max(1, round((service_s + overhead["total_latency_s"]) * 1e9))
+            if feedback_mode == "rounds":
+                round_ready_ns = completed + 2
             row = {"request_index": index, "arrival_id": rid, "task": item["task"], "workload": item["workload"],
                    "selected_provider": selected, "cost_cny": str(chosen["cost"]),
                    "fc_cost_cny": str(outcomes[(rid, "ali_fc")]["cost"]),
                    "agentrun_cost_cny": str(outcomes[(rid, "ali_agentrun")]["cost"]),
                    "routing_model_cost_cny": str(Decimal(str(overhead["cost"]))),
+                   "routing_rate_limit_retries": overhead.get("rate_limit_retries", 0),
+                   "routing_rate_limit_wait_s": overhead.get("rate_limit_wait_s", 0),
+                   "predicted_cost_basis": predicted_cost.get("basis"),
+                   "cost_training_ids": json.dumps(predicted_cost.get("training_request_ids", [])),
                    "routing_cost_complete": overhead.get("cost_complete", True),
                    "routing_latency_s": overhead["total_latency_s"], "selected_measured_latency_s": chosen["latency_s"],
                    "virtual_arrival_ns": stamp, "virtual_completion_ns": completed,
+                   "source_arrival_ns": 1_000_000_000 + ms_ns(item["relative_arrival_ms"]),
                    "success": chosen["success"], "decision_reason": decision["reason"],
                    "explored": decision["exploration"]["explored"],
                    "history_samples": decision["workload"]["sample_count"],
@@ -175,7 +203,12 @@ def replay(plan: dict, descriptors: dict, outcomes: dict, router, trace_loader, 
                        "reason": decision["reason"], "exploration": decision["exploration"],
                        "retrieval": decision["workload"]["retrieval"],
                        "history_ids": [p["request_id"] for p in decision["workload"]["joint_profiles"]],
-                       "candidates": [{k: c[k] for k in ("key", "flags", "prediction_flags", "objective_cost", "objective_latency")}
+                       "resource_calibrated": decision["workload"].get("uncertainty", {}).get("calibrated"),
+                       "candidates": [{**{k: c[k] for k in ("key", "flags", "prediction_flags", "objective_cost", "objective_latency")},
+                                       "cost_basis": (c.get("cost") or {}).get("basis"),
+                                       "cost_training_ids": (c.get("cost") or {}).get("training_request_ids", []),
+                                       "cost_confidence": c.get("prediction_diagnostics", {}).get("cost"),
+                                       "feedback_evidence": c.get("evidence")}
                                       for c in decision["candidates"]]}
             with (output / "decisions.jsonl").open("a") as stream:
                 stream.write(json.dumps(compact) + "\n")
@@ -191,14 +224,20 @@ def replay(plan: dict, descriptors: dict, outcomes: dict, router, trace_loader, 
             trace.update(request_id=row["arrival_id"], arrival_ns=row["virtual_arrival_ns"],
                          completed_ns=stamp, request_context=descriptors[row["arrival_id"]])
             starts = [s["start_ns"] for s in trace["spans"] if s.get("start_ns") is not None]
-            shift = row["virtual_arrival_ns"] + round(row["routing_latency_s"] * 1e9) - min(starts)
-            for span in trace["spans"]:
-                for field in ("start_ns", "end_ns"):
-                    if span.get(field) is not None:
-                        span[field] += shift
+            if feedback_mode == "measured":
+                shift = row["virtual_arrival_ns"] + round(row["routing_latency_s"] * 1e9) - min(starts)
+                for span in trace["spans"]:
+                    for field in ("start_ns", "end_ns"):
+                        if span.get(field) is not None:
+                            span[field] += shift
+            else:
+                trace.update(source="matched_native_lookup", feedback_clock="local_lookup_availability; source span clocks preserved")
             observation = router.complete(row["arrival_id"], trace, available_ns=stamp,
                                           actual_cost=float(chosen["cost"]), cost_basis="attributable_execution_cost")
             observation = copy.deepcopy(observation)
+            if feedback_mode == "rounds":
+                observation["measurements"]["latency_s"] = chosen["latency_s"]
+                observation["measurement_basis"] = "matched_fixed_arm_measurement, not lookup duration"
             components = {}
             for line in chosen.get("cost_components", []):
                 components[line["category"]] = components.get(line["category"], 0) + float(line["amount"])
@@ -232,19 +271,25 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cloud", type=Path, default=ROOT / "results/e3-independent-ali")
     parser.add_argument("--corpus", type=Path, default=ROOT / "results/e3-independent")
-    parser.add_argument("--retrieval", type=Path, default=ROOT / "experiments/exp1/configs/retrieval-dashscope.json")
+    parser.add_argument("--retrieval", type=Path, default=ROOT / "experiments/exp1/configs/retrieval-siliconflow.json")
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--order-seed", type=int, help="Independent arrival-order validation; primary run preserves original order")
+    parser.add_argument("--feedback-mode", choices=("measured", "rounds"), default="measured",
+                        help="Measured-delay simulation or sequential immediate-lookup bandit rounds; report separately")
     args = parser.parse_args()
     plan, config, outcomes, context = load_inputs(args.cloud, args.corpus)
+    if args.order_seed is not None:
+        plan = permute_arrivals(plan, args.order_seed)
     retrieval = read_json(args.retrieval)
     router = build_router(config, retrieval, context["descriptors"])
     assert not router.workload.samples and not router.provider.samples
     started = time.perf_counter()
     rows = replay(plan, context["descriptors"], outcomes, router,
-                  lambda o: read_json(Path(o["directory"]) / "trace.json"), args.output)
+                  lambda o: read_json(Path(o["directory"]) / "trace.json"), args.output, feedback_mode=args.feedback_mode)
     assert len(rows) == len(router.completed) == 213 and not router.active
     assert all(Decimal(r["cost_cny"]) == outcomes[(r["arrival_id"], r["selected_provider"])]["cost"] for r in rows)
-    summary = {"requests": len(rows), "successes_from_selected_baselines": sum(r["success"] for r in rows),
+    summary = {"requests": len(rows), "arrival_order_seed": args.order_seed, "feedback_mode": args.feedback_mode,
+               "successes_from_selected_baselines": sum(r["success"] for r in rows),
                "selected_providers": dict(Counter(r["selected_provider"] for r in rows)),
                "cumulative_tool_cost_cny": rows[-1]["cumulative_cost_cny"],
                "fixed_fc_cny": rows[-1]["cumulative_fc_cost_cny"],
@@ -252,6 +297,8 @@ def main() -> None:
                "routing_model_cost_cny": rows[-1]["cumulative_routing_model_cost_cny"],
                "cost_including_routing_cny": rows[-1]["cumulative_with_routing_cny"],
                "routing_cost_complete": all(r["routing_cost_complete"] for r in rows),
+               "rate_limit_retries": sum(r["routing_rate_limit_retries"] for r in rows),
+               "rate_limit_wait_s": sum(r["routing_rate_limit_wait_s"] for r in rows),
                "decision_reasons": dict(Counter(r["decision_reason"] for r in rows)),
                "retrieval_modes": dict(Counter(r["retrieval_basis"] for r in rows)),
                "retrieval_errors": dict(Counter(r["retrieval_error"] for r in rows if r["retrieval_error"])),
@@ -263,7 +310,9 @@ def main() -> None:
                           "exploration": router.exploration.config},
                "source_native_evidence": context["evidence"],
                "limits": ["Local causal replay of fixed-arm outcomes; no new routed cloud execution.",
-                          "Chosen fixed-arm latency schedules feedback; dynamic-load effects are not measured.",
+                          "Chosen fixed-arm latency schedules feedback; dynamic-load effects are not measured."
+                          if args.feedback_mode == "measured" else
+                          "Sequential selected-cost lookup feedback; source latency is retained separately and does not delay feedback.",
                           "Planner model revision is not used; sample and residual calibration gates remain active.",
                           "Failed/partial source replays retain their measured cost and status."]}
     (args.output / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")

@@ -48,6 +48,24 @@ PYTHONPATH=. .venv/bin/python -m experiments.e3.independent seal \
 
 新协议修改了执行源码，所以旧协议的源文件封存校验会拒绝使用当前源码重新执行旧实验。旧数据和结果保留；新实验在 Capture 完成后封存当前源码，不修改旧 seal 来绕过检查。
 
+## 换模型采集全部 213 条
+
+```bash
+.venv/bin/python -u -m experiments.e3.capture_model \
+  --output results/e3-gpt-oss-20b \
+  --config benchmarks/DataSciBench/config/langgraph_openrouter_gpt_oss_20b.json
+```
+
+沿用 `plan.json` 全部 213 条请求（包括原来保留的 24 条），每条重新执行一次真实 LangGraph 和本地 Docker MCP Session。读取 DeepSeek 索引中的实际 Agent 指令和迭代上限，替换模型配置；原 Prompt、输入、验证器与旧 Capture 保留。复用 `local-capture` 的 Tool 服务、输入及镜像，不执行云端部署。
+
+每条只做一次任务执行，不根据业务结果重新采样。模型客户端原有逐调用重试仍记录在事件中。`capture-index.json` 的 `capture_status` 独立检查事件连续性、请求 ID、关闭回执、已结束的 Span 和最终 Trace；`task_status`、`validation`、`failure_origin` 分别保存业务结果、校验结果和失败来源。模型未完成任务、输出格式错误或业务校验未通过都可以有完整 Capture，不会冒充业务成功。API、超时及 Runtime 错误单独标注，原始响应和诊断保留。
+
+每条目录包含 `trace/{events.jsonl,result.json,trace.json,workload_profile.json}.gz`、实际配置、服务日志和 `receipt.json`；DataSci 已发布的产物另存为 `generated-artifacts.tar.gz`。记录完整并成功归档后清理临时计算状态。相同参数重启时跳过已有 receipt；未结束的目录会要求检查，不覆盖或悄悄重跑。原始到达时间保留为元数据，本地采集使用有界并发，不是十分钟实时回放，也不绕过原成功 Replay 的封存门槛。
+
+固定子集对照使用 `--selection selection.json`，其中 `ids` 是预先确定的请求 ID 列表；只执行这些请求，索引的 expected 对应子集大小。`results/e3-gpt-oss-20b-high-8/selection.json` 固定四类各两条、各来自不同 family_id，不按 low 业务结果筛选；high 配置仅调整 reasoning_effort，沿用 low 的 token/迭代上限。比较结果不能视作全部 213 条的成功率。
+
+本版本可在输出目录创建 `STOP_AFTER_ACTIVE`，停止调度新任务并让当前任务完成。恢复需显式移除此标记，再使用相同命令。旧版 low 进程未包含此入口，2026-11-05 按用户要求以 SIGINT 收尾：31 条已结束任务保留，另外两条在 receipt 中标为 interrupted/user_pause，原始中断 Trace 和临时状态保留，不计为模型失败。该暂停不自动恢复整批，也不支持在没有业务 checkpoint 的情况下从中断节点继续。
+
 ## 费用平衡
 
 准备时先用历史 24 个任务的 Ali FC/MCP 费用确定任务族配比，再固定请求和输入。现有计划的两侧估算均约 ¥1.79855。该值是历史任务族的规划估算，不是新增请求的实测费用，也不意味着 AWS 已平衡。

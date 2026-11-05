@@ -198,8 +198,8 @@ class WorkloadModel:
             eligible = [
                 p for p in eligible if compatible(descriptor, p.get("descriptor"))
             ]
-            successes = sorted(
-                (p for p in eligible if p["status"] == "success"),
+            history = sorted(
+                eligible,
                 key=lambda p: (
                     -self.samples[p["request_id"]]["available_ns"],
                     p["request_id"],
@@ -216,16 +216,17 @@ class WorkloadModel:
                 and p["completed_ns"] < as_of_ns
                 and compatible(descriptor, p.get("descriptor"))
             ]
-            known_ids = {p["request_id"] for p in successes}
+            known_ids = {p["request_id"] for p in history}
             priors = {
                 p["request_id"]: p for p in priors if p["request_id"] not in known_ids
             }
             samples, retrieval = self.retriever.select(
-                descriptor, successes + list(priors.values())
+                descriptor, history + list(priors.values())
             )
             # Do not trust a backend to enforce isolation on our behalf.
             samples = [
-                p for p in samples if compatible(descriptor, p.get("descriptor"))
+                p for p in samples
+                if p.get("status") == "success" and compatible(descriptor, p.get("descriptor"))
             ][:20]
             basis = retrieval["match_basis"] if samples else "cold_start"
             n = len(samples)
@@ -258,7 +259,7 @@ class WorkloadModel:
                 "as_of_ns": as_of_ns,
                 "sample_count": n,
                 "match_basis": basis,
-                "eligible_success_count": len(successes),
+                "eligible_success_count": sum(p["status"] == "success" for p in history),
                 "unknown_request": not samples,
                 "descriptor": copy.deepcopy(descriptor),
                 "joint_profiles": copy.deepcopy(samples),

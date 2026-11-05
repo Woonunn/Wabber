@@ -46,10 +46,7 @@ class RoutingLearningTests(unittest.TestCase):
         )
         decision = router.decide("paraphrase", descriptor=changed, as_of_ns=1000)
         self.assertLess(decision["exploration"]["epsilon"], 1)
-        for field, value in [
-            ("model", {"name": "other"}),
-            ("control", {"max_iterations": 999}),
-        ]:
+        for field, value in [("model", {"name": "other"})]:
             isolated = {**changed, field: value}
             self.assertEqual(
                 router.exploration.evidence(
@@ -57,6 +54,15 @@ class RoutingLearningTests(unittest.TestCase):
                 )["attempts"],
                 0,
             )
+        self.assertEqual(
+            router.exploration.evidence(
+                router.provider,
+                router.pools["known"],
+                {**changed, "control": {"max_iterations": 999}},
+                1000,
+            )["attempts"],
+            3,
+        )
         huge = describe(
             prompt=changed["prompt"],
             tools=["python"],
@@ -95,6 +101,37 @@ class RoutingLearningTests(unittest.TestCase):
             ),
             [],
         )
+
+    def test_sparse_probe_waits_for_pending_feedback_when_an_incumbent_exists(self):
+        policy = Exploration({"min_samples": 3})
+        candidates = [
+            {
+                "key": key,
+                "objective_cost": 1,
+                "cost": {"basis": "predicted"},
+                "objective_latency": None,
+                "execution_bounds": {"timeout_s": 900},
+                "flags": [],
+                "currency": "USD",
+                "evidence": {"attempts": 0, "successes": 0, "pending_feedback": 0},
+            }
+            for key in ["established", "new-arm"]
+        ]
+        def opportunities(incumbent):
+            return policy.opportunities(candidates, incumbent, cost_weight=1, latency_weight=0)
+
+        self.assertEqual([o["key"] for o in opportunities(candidates[0])], ["new-arm"])
+        candidates[1]["evidence"]["pending_feedback"] = 1
+        self.assertEqual(opportunities(candidates[0]), [])
+        self.assertTrue(opportunities(None))
+        self.assertEqual(candidates[1]["evidence"]["attempts"], 0)
+        candidates[0]["cost"]["basis"] = "analytical"
+        self.assertEqual([o["key"] for o in opportunities(candidates[0])], ["new-arm"])
+        candidates[0]["cost"]["basis"] = "predicted"
+        candidates[1]["evidence"].update(pending_feedback=0, attempts=1, successes=1)
+        self.assertEqual([o["key"] for o in opportunities(candidates[0])], ["new-arm"])
+        candidates[1]["evidence"].update(pending_feedback=1, attempts=3, successes=3)
+        self.assertEqual([o["key"] for o in opportunities(candidates[0])], ["new-arm"])
 
     def test_failed_zero_cost_is_retained_with_its_original_basis(self):
         router, descriptor = router_fixture(epsilon=0)

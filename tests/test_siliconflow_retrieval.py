@@ -89,6 +89,37 @@ class SiliconFlowTests(unittest.TestCase):
         self.assertEqual(self.backend.rerank({}, []), [])
         self.assertEqual(self.requests, [])
 
+    def test_rate_limit_waits_one_minute_and_only_successful_tokens_are_charged(self):
+        from openai import RateLimitError
+
+        rejected = RateLimitError("limit", response=httpx.Response(429, request=httpx.Request("POST", "https://test/rerank")), body={})
+        self.backend.config["rates"]["input"] = .5
+        with patch.object(self.client, "post", side_effect=[rejected, self.response]), patch(
+            "atsuite.workload.retrieval.time.sleep"
+        ) as sleep:
+            rows = self.backend.rerank({}, [{"id": "a"}, {"id": "b"}])
+        sleep.assert_called_once_with(60)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(self.backend.rate_limit_retries, 1)
+        self.assertEqual(self.backend.rate_limit_wait_s, 60)
+        self.assertAlmostEqual(self.backend.cost, 22 * .5 / 1e6)
+
+    def test_repeated_rate_limits_split_candidates_without_losing_history(self):
+        from openai import RateLimitError
+
+        rejected = RateLimitError("limit", response=httpx.Response(429, request=httpx.Request("POST", "https://test/rerank")), body={})
+        one = {"meta": {"tokens": {"input_tokens": 10}}, "results": [{"index": 0, "relevance_score": .8}]}
+        self.backend.config["rates"]["input"] = .5
+        with patch.object(self.client, "post", side_effect=[rejected, rejected, one, one]) as post, patch(
+            "atsuite.workload.retrieval.time.sleep"
+        ) as sleep:
+            rows = self.backend.rerank({}, [{"id": "a"}, {"id": "b"}])
+        self.assertEqual(sleep.call_args_list, [unittest.mock.call(60), unittest.mock.call(60)])
+        self.assertEqual({r["id"] for r in rows}, {"a", "b"})
+        self.assertEqual([len(c.kwargs["body"]["documents"]) for c in post.call_args_list], [2, 2, 1, 1])
+        self.assertEqual(self.backend.rate_limit_retries, 2)
+        self.assertAlmostEqual(self.backend.cost, 20 * .5 / 1e6)
+
 
 if __name__ == "__main__":
     unittest.main()

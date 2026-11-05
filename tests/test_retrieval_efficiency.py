@@ -7,13 +7,20 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from atsuite.workload.retrieval import ContextBackend, ContextRetriever
+from atsuite.workload.retrieval import ContextBackend, ContextRetriever, _context_text
 from tests.test_context_prediction import Backend
 from tests.test_provider_model import profile
 from tests.workload_fixtures import describe
 
 
 class RetrievalEfficiencyTests(unittest.TestCase):
+    def test_prompt_leads_metadata_without_dropping_fields_or_changing_with_key_order(self):
+        context = describe(prompt='Read "header" only\nDo not train', tools=["python"])
+        text = _context_text(context)
+        self.assertEqual(text, _context_text(dict(reversed(list(context.items())))))
+        self.assertTrue(text.startswith('{"prompt":'))
+        self.assertEqual(json.loads(text), context)
+
     def backend(self):
         config = json.loads(
             (Path(__file__).resolve().parents[1]
@@ -29,7 +36,7 @@ class RetrievalEfficiencyTests(unittest.TestCase):
         ):
             return ContextBackend(config), client
 
-    def test_bge_keeps_variable_context_behavior_and_original_inputs(self):
+    def test_bge_compares_full_arrival_contexts_and_preserves_original_outcomes(self):
         backend, client = self.backend()
         query = describe(
             prompt="Do not train; read only the header", tools=["python"],
@@ -51,6 +58,8 @@ class RetrievalEfficiencyTests(unittest.TestCase):
         self.assertEqual(document["context"],
                          {k: v for k, v in other.items() if k not in shared})
         self.assertEqual(document["behavior"], candidates[0]["behavior"])
+        self.assertTrue(body["documents"][0].startswith('{"context":'))
+        self.assertLess(body["query"].index('"prompt"'), body["query"].index('"control"'))
         self.assertEqual((query, candidates), original)
 
     def test_bge_preserves_full_payload_without_verified_shared_identity(self):
@@ -66,6 +75,23 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             self.assertEqual(json.loads(body["query"]), query)
             self.assertEqual(json.loads(body["documents"][0]), candidates[0])
 
+    def test_native_body_retains_behavior_summary_and_original_graph(self):
+        backend, client = self.backend()
+        query = describe(prompt="New computation", tools=["python"])
+        graph = {"nodes": [{"id": "opaque-span-id", "name": "analysis"}], "edges": [],
+                 "tool_calls": {"calculate": 3}, "parallel_peak": 2,
+                 "routes": [{"node": "analysis", "targets": []}]}
+        candidates = [{"id": "history", "context": query,
+                       "behavior": {"metrics": {"cpu_s": .01}, "workflow": graph}}]
+        original = copy.deepcopy(candidates)
+        backend.rerank(query, candidates)
+        document = json.loads(client.post.call_args.kwargs["body"]["documents"][0])
+        self.assertNotIn("id", document)
+        self.assertEqual(document["behavior"]["metrics"], {"cpu_s": .01})
+        self.assertEqual(document["behavior"]["workflow"],
+                         {k: v for k, v in graph.items() if k not in {"nodes", "edges"}})
+        self.assertEqual(candidates, original)
+
     def samples(self, huge_count=1):
         query = describe(prompt="read", tools=["python"],
                          files=[{"name": "x.csv", "bytes": 10}])
@@ -78,29 +104,41 @@ class RetrievalEfficiencyTests(unittest.TestCase):
         rows.append({**profile(), "request_id": "good", "descriptor": query})
         return query, rows
 
-    def test_excludes_existing_scale_rejections_before_reranking(self):
+    def test_embedding_omits_only_verified_fixed_identity_fields_and_preserves_context(self):
+        query, rows = self.samples()
+        original = copy.deepcopy((query, rows))
+        backend = Backend(["good"])
+        ContextRetriever(backend).select(query, rows[1:])
+        self.assertEqual(json.loads(backend.embed_inputs[0]),
+                         {k: v for k, v in query.items() if k not in {"tool_definitions", "harness"}})
+        self.assertEqual((query, rows), original)
+
+    def test_scale_support_filters_resources_without_discarding_cost_context(self):
         query, rows = self.samples()
         backend = Backend(["good", "huge-0"])
         selected, evidence = ContextRetriever(backend).select(query, rows)
         self.assertEqual([p["request_id"] for p in selected], ["good"])
-        self.assertEqual([c["id"] for c in backend.seen], ["good"])
+        self.assertEqual([c["id"] for c in backend.seen], ["huge-0", "good"])
+        self.assertEqual(evidence["context_neighbors"], ["huge-0", "good"])
         self.assertIsNone(evidence["error"])
 
-    def test_empty_eligible_recall_skips_rerank_without_expanding_top_40(self):
+    def test_outside_scale_recall_keeps_budget_and_does_not_invent_resources(self):
         query, rows = self.samples(40)
-        backend = Backend(["good"])
+        backend = Backend(["good", *[f"huge-{i}" for i in range(40)]])
         selected, evidence = ContextRetriever(backend).select(query, rows)
         self.assertEqual(selected, [])
-        self.assertEqual(backend.seen, [])
-        self.assertEqual(backend.cost, 0.001)
+        self.assertEqual(len(backend.seen), 20)
+        self.assertNotIn("good", evidence["context_neighbors"])
+        self.assertEqual(len(evidence["context_neighbors"]), 20)
+        self.assertEqual(backend.cost, 0.003)
         self.assertEqual(evidence["match_basis"], "cold_start")
         self.assertIsNone(evidence["error"])
 
 
-    def test_native_candidates_within_limit_keep_entire_sample_without_api(self):
+    def test_single_native_candidate_needs_no_ranking(self):
         query, _ = self.samples()
         for api in ("siliconflow", "dashscope"):
-            for count in (1, 20):
+            for count in (1,):
                 with self.subTest(api=api, count=count):
                     rows = [{**profile(state=i + 1), "request_id": str(i),
                              "descriptor": query} for i in range(count)]
@@ -115,7 +153,7 @@ class RetrievalEfficiencyTests(unittest.TestCase):
                         for r in evidence["candidates"]
                     ))
 
-    def test_native_candidates_over_limit_still_use_ranking(self):
+    def test_native_ranking_orders_cost_neighbors_even_when_all_fit(self):
         query, _ = self.samples()
         rows = [{**profile(), "request_id": str(i), "descriptor": query}
                 for i in range(2)]
@@ -125,8 +163,9 @@ class RetrievalEfficiencyTests(unittest.TestCase):
             {"id": "0", "usable": True, "utility": 0.1, "reason": "lower"},
             {"id": "1", "usable": True, "utility": 0.9, "reason": "higher"},
         ])
-        selected, evidence = ContextRetriever(backend).select(query, rows, limit=1)
-        self.assertEqual([p["request_id"] for p in selected], ["1"])
+        selected, evidence = ContextRetriever(backend).select(query, rows)
+        self.assertEqual([p["request_id"] for p in selected], ["1", "0"])
+        self.assertEqual(evidence["context_neighbors"], ["1", "0"])
         backend.rerank.assert_called_once()
         self.assertIsNone(evidence["error"])
 

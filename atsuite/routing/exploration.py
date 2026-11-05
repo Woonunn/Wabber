@@ -6,7 +6,7 @@ import math
 import random
 
 from atsuite.provider_model.model import _compatible
-from atsuite.workload.descriptor import compatible, family_key, model_settings, resource_distance
+from atsuite.workload.descriptor import compatible, family_key, resource_distance
 from atsuite.workload.profile import number
 
 
@@ -53,6 +53,7 @@ class Exploration:
     def evidence(self, provider, pool, descriptor, now):
         """Share completed attempts across compatible settings and nearby input scales."""
         rows = []
+        has_cost_feedback = False
         cutoff = max(self.config["epoch_ns"], now - self.config["window_s"] * 1e9)
         with provider.lock:
             for history in provider.samples.values():
@@ -69,15 +70,20 @@ class Exploration:
                     and descriptor is not None
                     and d is not None
                     and compatible(descriptor, d)
-                    and model_settings(descriptor.get("model")) == model_settings(d.get("model"))
-                    and descriptor.get("control") == d.get("control")
-                    and resource_distance(descriptor, d) <= 0.5
+                    and (descriptor.get("model") or {}).get("name")
+                    and (descriptor.get("model") or {}).get("name") == (d.get("model") or {}).get("name")
                 ):
-                    rows.append(row)
+                    charge = row.get("cost") or {}
+                    has_cost_feedback |= bool(charge.get("complete") and charge.get("scope") in {
+                        "request_execution", "matched_native_usage",
+                    })
+                    if resource_distance(descriptor, d) <= 0.5:
+                        rows.append(row)
         return {
             "attempts": len(rows),
             "successes": sum(r["status"] == "success" for r in rows),
             "last_available_ns": max((r["available_ns"] for r in rows), default=None),
+            "has_cost_feedback": has_cost_feedback,
         }
 
     def opportunities(self, candidates, incumbent, *, cost_weight, latency_weight):
@@ -100,6 +106,10 @@ class Exploration:
                 continue
             evidence = c["evidence"]
             n, ok = evidence["attempts"], evidence["successes"]
+            # An observed incumbent can serve traffic while a sparse arm's probe returns its reward.
+            if (incumbent is not None and (incumbent.get("cost") or {}).get("basis") == "predicted"
+                    and n < self.config["min_samples"] and evidence.get("pending_feedback", 0)):
+                continue
             if c["objective_latency"] is not None and c["objective_latency"] >= c["execution_bounds"]["timeout_s"]:
                 continue
             if base is None or not priced(c):
@@ -134,6 +144,13 @@ class Exploration:
                         "evidence": evidence,
                     }
                 )
+        if incumbent is None and result:
+            pending = {c["key"]: c["evidence"].get("pending_feedback", 0) for c in candidates}
+            unprobed = [o for o in result if pending[o["key"]] == 0]
+            if unprobed:
+                return unprobed
+            for opportunity in result:
+                opportunity["weight"] /= math.sqrt(1 + pending[opportunity["key"]])
         return result
 
     def choose(

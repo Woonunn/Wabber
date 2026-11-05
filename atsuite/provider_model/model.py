@@ -19,13 +19,28 @@ from atsuite.provider_model.observation import (
     validate_pool,
 )
 from atsuite.tracing.storage import read_text, write_json
-from atsuite.workload.descriptor import compatibility_key, compatible
+from atsuite.workload.descriptor import compatibility_key, compatible, resource_distance
 from atsuite.workload.model import distribution
 from atsuite.workload.profile import number
 
 
-def _distribution(values: list[float], total: int) -> dict:
+def _distribution(values: list[float], total: int, weights: list[float] | None = None) -> dict:
     result = distribution(values, total)
+    if weights is not None and values:
+        if len(weights) != len(values) or any(not number(w) or w == 0 for w in weights):
+            raise ValueError("Invalid empirical sample weights")
+        ordered = sorted(zip(values, weights))
+        mass = sum(weights)
+        result["weights"] = [w / mass for _, w in ordered]
+        result["mean"] = sum(v * w for v, w in ordered) / mass
+        for label, quantile in [("p10", .1), ("p50", .5), ("p90", .9), ("p95", .95), ("p99", .99)]:
+            cumulative = 0.0
+            for value, weight in ordered:
+                cumulative += weight
+                if cumulative >= quantile * mass:
+                    result[label] = value
+                    break
+        return result
     values = result["samples"]
     position = (len(values) - 1) * 0.95
     lo = int(position)
@@ -269,10 +284,14 @@ class ProviderModel:
         if not number(as_of_ns) or not number(load_rps) or not number(horizon_s) or horizon_s == 0:
             raise ValueError("Invalid prediction time, load or horizon")
         marginal = False
+        context_neighbors = None
+        arrival_context = None
         if isinstance(workload, list):
             profiles = workload
         elif "joint_profiles" in workload:
             profiles = workload["joint_profiles"]
+            context_neighbors = workload.get("retrieval", {}).get("context_neighbors")
+            arrival_context = workload.get("descriptor")
         elif "sample_count" in workload:
             marginal = True
             profiles = [
@@ -296,6 +315,8 @@ class ProviderModel:
             validate_pool(pool)
             candidates = [r for r in visible if _compatible(r["pool"], pool) and not r.get("capacity_transition")]
             descriptors = [p.get("descriptor") for p in profiles if p.get("descriptor") is not None]
+            if not descriptors and arrival_context is not None:
+                descriptors.append(arrival_context)
             candidates = [
                 r for r in candidates
                 if any(compatible(d, r["profile"].get("descriptor")) for d in descriptors)
@@ -349,9 +370,29 @@ class ProviderModel:
                     and r.get("cost")
                     and (r["cost"]["scope"], r["cost"]["basis"], r["cost"]["complete"]) == (scope, basis, complete)
                 ]
-                cost_neighbors = {k: _nearest(source, q, self.neighbors) for k, q in unique_queries.items()}
+                contextual = (context_neighbors is not None and arrival_context is not None
+                              and kind == "request" and scope in {"request_execution", "matched_native_usage"})
+                if contextual:
+                    rank = {rid: i for i, rid in enumerate(context_neighbors)}
+                    model_name = (arrival_context.get("model") or {}).get("name")
+                    source = [r for r in source if r["id"] in rank
+                              and compatible(arrival_context, r["profile"].get("descriptor"))
+                              and model_name and (r["profile"]["descriptor"].get("model") or {}).get("name") == model_name]
+                    source.sort(key=lambda r: rank[r["id"]])
+                    supported = [r for r in source if resource_distance(arrival_context, r["profile"]["descriptor"]) <= .5]
+                    source = supported or source
+                    count = min(self.neighbors, max(self.minimum_samples, math.ceil(math.sqrt(len(source)))))
+                    outside_scale = any(
+                        resource_distance(arrival_context, r["profile"]["descriptor"]) > .5 for r in source[:count]
+                    )
+                    # Contexts are ranked before execution; costs are labels of past chosen actions only.
+                    cost_neighbors = {"context": (source[:count], {})}
+                    cost_query_keys = ["context"]
+                else:
+                    cost_neighbors = {k: _nearest(source, q, self.neighbors) for k, q in unique_queries.items()}
+                    cost_query_keys = query_keys
                 chosen, cost_coverage = [], []
-                for key in query_keys:
+                for key in cost_query_keys:
                     rows, info = cost_neighbors[key]
                     chosen.extend(rows)
                     cost_coverage.append(info)
@@ -362,6 +403,10 @@ class ProviderModel:
                     values.append(sum(row["cost"]["components"].values()) * scale)
                     for category, value in row["cost"]["components"].items():
                         components.setdefault(category, []).append(value * scale)
+                weights = [1 / (i + 1) ** 2 for i in range(len(chosen))] if contextual else None
+                if contextual:
+                    components = {category: [r["cost"]["components"].get(category, 0) for r in chosen]
+                                  for category in components}
                 costs.append(
                     {
                         "kind": kind,
@@ -370,11 +415,20 @@ class ProviderModel:
                         "basis": "predicted",
                         "training_basis": basis,
                         "complete": complete,
-                        "subtotal": _distribution(values, len(chosen)),
-                        "total": _distribution(values, len(chosen)) if complete else None,
-                        "components": {k: _distribution(v, len(chosen)) for k, v in components.items()},
+                        "subtotal": _distribution(values, len(chosen), weights),
+                        "total": _distribution(values, len(chosen), weights) if complete else None,
+                        "components": {k: _distribution(v, len(chosen), weights) for k, v in components.items()},
                         "coverage": cost_coverage,
-                        "confidence": target_confidence(
+                        "contextual": contextual,
+                        "training_request_ids": [r["id"] for r in chosen] if contextual else sorted({r["id"] for r in chosen}),
+                        "confidence": {
+                            "reliable": len({r["id"] for r in chosen}) >= self.minimum_samples and not outside_scale,
+                            "reasons": (["sample_insufficient"] if len({r["id"] for r in chosen}) < self.minimum_samples else [])
+                                       + (["input_scale_outside_support"] if outside_scale else []),
+                            "unique_samples": len({r["id"] for r in chosen}),
+                            "minimum_samples": self.minimum_samples,
+                            "basis": "prior_ranked_arrival_contexts",
+                        } if contextual else target_confidence(
                             cost_coverage, len({r["id"] for r in chosen}),
                             required={"tool_elapsed_s", "parallel_peak", "load_rps"},
                             minimum=self.minimum_samples, marginal=marginal,
@@ -432,9 +486,9 @@ class ProviderModel:
                 cost_confidence["reasons"].append("cost_evidence_insufficient")
             cost_confidence["reliable"] = not cost_confidence["reasons"]
             empirical = next((
-                c for c in sorted(costs, key=lambda c: c["training_basis"] != "actual")
+                c for c in sorted(costs, key=lambda c: (not c["confidence"]["reliable"], c["training_basis"] != "actual"))
                 if c["kind"] == "request" and c["scope"] in {"request_execution", "matched_native_usage"}
-                and c["complete"] and c["confidence"]["reliable"]
+                and c["complete"] and (c["confidence"]["reliable"] or c["contextual"] and c["total"]["n"] > 0)
             ), None)
             if empirical:
                 cost_confidence = {**empirical["confidence"], "missing_cost_evidence": []}

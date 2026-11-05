@@ -3,6 +3,7 @@
 import json
 import math
 import os
+import sys
 import time
 from typing import Any
 
@@ -23,6 +24,12 @@ session state. Unknown file usage is uncertain, not an observed read. Reject sem
 execute differently. Wording differences alone are not a reason to reject. Do not choose providers.
 Return JSON {"candidates":[{"id":<supplied id>,"usable":true|false,"utility":0..1,"reason":<text>}]}.
 Utility ranks usefulness, NOT probability of correctness. List every supplied candidate once."""
+
+
+def _context_text(value: dict) -> str:
+    """Put the full prompt before metadata, independent of descriptor key order."""
+    ordered = dict(sorted(value.items(), key=lambda pair: (pair[0] not in {"prompt", "context"}, pair[0])))
+    return json.dumps(ordered, ensure_ascii=False, separators=(",", ":"))
 
 
 class ContextBackend:
@@ -61,7 +68,7 @@ class ContextBackend:
             raise ValueError("Supply dated per-million-token inference rates")
         self.config = config
         self.revision = fingerprint(
-            {"config": config, "rerank_payload": "gated-context-v2"}
+            {"config": config, "rerank_payload": "gated-context-v5"}
             if self.rerank_api == "siliconflow" else config
         )
         self.client = OpenAI(
@@ -72,6 +79,26 @@ class ContextBackend:
         )
         self.cost = 0.0
         self.currency = config["currency"]
+        self.rate_limit_retries = 0
+        self.rate_limit_wait_s = 0.0
+
+    def _request(self, call, *, split=False):
+        """Retry rate limits after one minute; rejected calls carry no token charge."""
+        from openai import RateLimitError
+
+        attempts = 0
+        while True:
+            try:
+                return call()
+            except RateLimitError:
+                attempts += 1
+                self.rate_limit_retries += 1
+                print(json.dumps({"event": "retrieval_rate_limit", "retry": self.rate_limit_retries,
+                                  "wait_s": 60, "cost": 0}), file=sys.stderr, flush=True)
+                time.sleep(60)
+                self.rate_limit_wait_s += 60
+                if split and attempts >= 2:
+                    raise
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Return vectors in input order and account for embedding token use."""
@@ -79,10 +106,10 @@ class ContextBackend:
         # text-embedding-v4 accepts at most ten texts per request.
         for start in range(0, len(texts), 10):
             batch = texts[start : start + 10]
-            response = self.client.embeddings.create(
+            response = self._request(lambda: self.client.embeddings.create(
                 model=self.config["embedding_model"], input=batch,
                 encoding_format="float",
-            )
+            ))
             if response.usage is None or not number(response.usage.total_tokens):
                 raise ValueError("Missing embedding accounting")
             self.cost += (
@@ -96,11 +123,22 @@ class ContextBackend:
 
     def rerank(self, query: dict, candidates: list[dict]) -> list[dict]:
         """Judge only arrival contexts and already-visible historical observations."""
+        from openai import RateLimitError
+
+        try:
+            return self._rerank(query, candidates)
+        except RateLimitError:
+            midpoint = len(candidates) // 2
+            # Repeated throttling reduces batch size without dropping any eligible history.
+            results = self.rerank(query, candidates[:midpoint]) + self.rerank(query, candidates[midpoint:])
+            return sorted(results, key=lambda r: -r["utility"])
+
+    def _rerank(self, query: dict, candidates: list[dict]) -> list[dict]:
         if self.rerank_api in {"dashscope", "siliconflow"}:
             if not candidates:
                 return []
             if self.rerank_api == "dashscope":
-                response = self.client.post(
+                response = self._request(lambda: self.client.post(
                     self.config["rerank_base_url"].rstrip("/")
                     + "/services/rerank/text-rerank/text-rerank",
                     cast_to=dict[str, Any],
@@ -118,14 +156,15 @@ class ContextBackend:
                             "instruct": RERANK_INSTRUCTION.split("\nReturn JSON")[0],
                         },
                     },
-                )
+                ), split=len(candidates) > 1)
 
                 tokens = response.get("usage", {}).get("total_tokens")
                 results = response.get("output", {}).get("results")
             else:
-                if compatibility_key(query) is not None and all(
+                gated = compatibility_key(query) is not None and all(
                     compatible(query, c.get("context")) for c in candidates
-                ):
+                )
+                if gated:
                     # The gate already verified these shared definitions and identities.
                     shared = {"tool_definitions", "harness"}
                     query = {k: v for k, v in query.items() if k not in shared}
@@ -135,20 +174,29 @@ class ContextBackend:
                         }}
                         for c in candidates
                     ]
-                response = self.client.post(
+                documents = []
+                for candidate in candidates:
+                    document = candidate
+                    if gated:
+                        document = {k: v for k, v in candidate.items() if k != "id"}
+                        behavior = document.get("behavior")
+                        if behavior and isinstance(behavior.get("workflow"), dict):
+                            # Names/counts/routes retain behavior; opaque node coordinates stay in the original profile.
+                            document = {**document, "behavior": {**behavior, "workflow": {
+                                k: v for k, v in behavior["workflow"].items() if k not in {"nodes", "edges"}
+                            }}}
+                    documents.append(_context_text(document))
+                response = self._request(lambda: self.client.post(
                     "/rerank",
                     cast_to=dict[str, Any],
                     body={
                         "model": self.config["rerank_model"],
-                        "query": json.dumps(query, sort_keys=True, ensure_ascii=False),
-                        "documents": [
-                            json.dumps(c, sort_keys=True, ensure_ascii=False)
-                            for c in candidates
-                        ],
+                        "query": _context_text(query),
+                        "documents": documents,
                         "top_n": len(candidates),
                         "return_documents": False,
                     },
-                )
+                ), split=len(candidates) > 1)
                 tokens = response.get("meta", {}).get("tokens", {}).get("input_tokens")
                 results = response.get("results")
             if not number(tokens):
@@ -177,7 +225,7 @@ class ContextBackend:
                 }
                 for r in results
             ]
-        response = self.client.chat.completions.create(
+        response = self._request(lambda: self.client.chat.completions.create(
             model=self.config["rerank_model"],
             temperature=0,
             response_format={"type": "json_object"},
@@ -190,7 +238,7 @@ class ContextBackend:
                     ),
                 },
             ],
-        )
+        ))
         if response.usage is None:
             raise ValueError("Missing inference accounting")
         self.cost += (
@@ -210,7 +258,7 @@ class ContextRetriever:
         self.backend = backend
         self.revision = fingerprint(
             {
-                "algorithm": "context-retrieval-v4",
+                "algorithm": "context-retrieval-v11",
                 "backend": getattr(backend, "revision", None),
                 "rerank": rerank,
                 "instruction": RERANK_INSTRUCTION if backend and rerank else None,
@@ -237,6 +285,8 @@ class ContextRetriever:
             "currency": getattr(self.backend, "currency", None),
         }
         before = getattr(self.backend, "cost", 0.0)
+        retries_before = getattr(self.backend, "rate_limit_retries", 0)
+        wait_before = getattr(self.backend, "rate_limit_wait_s", 0.0)
         try:
             if not compatible_profiles:
                 return [], evidence
@@ -251,6 +301,7 @@ class ContextRetriever:
                     {"id": p["request_id"], "reason": "identical arrival context"}
                     for p in selected
                 ]
+                evidence["context_neighbors"] = [p["request_id"] for p in selected]
                 return selected, evidence
             descriptors = [query] + [p["descriptor"] for p in compatible_profiles]
             keys = [
@@ -261,7 +312,7 @@ class ContextRetriever:
             if missing:
                 vectors = self.backend.embed(
                     [
-                        json.dumps(d, sort_keys=True, ensure_ascii=False)
+                        _context_text({k: v for k, v in d.items() if k not in {"tool_definitions", "harness"}})
                         for d in missing.values()
                     ]
                 )
@@ -293,14 +344,7 @@ class ContextRetriever:
 
             recalled = sorted(
                 zip(compatible_profiles, keys[1:]), key=lambda pair: -cosine(pair[1])
-            )[:40]
-            if self.rerank:
-                recalled = [
-                    (p, key) for p, key in recalled
-                    if resource_distance(query, p["descriptor"]) <= 0.5
-                ]
-                if not recalled:
-                    return [], evidence
+            )[:limit if self.rerank else 40]
             history = [
                 {
                     "id": p["request_id"],
@@ -319,16 +363,16 @@ class ContextRetriever:
                     }
                     for i, (p, _) in enumerate(recalled)
                 ]
-            elif len(history) <= limit and getattr(
+            elif len(history) == 1 and getattr(
                 self.backend, "rerank_api", None
             ) in {"dashscope", "siliconflow"}:
-                # Native scores only order candidates; all fit the empirical sample.
+                # Native scores order cost neighbors even when every candidate fits.
                 judgments = [
                     {
                         "id": p["request_id"],
                         "usable": True,
                         "utility": 0.0,
-                        "reason": "native ranking skipped: all eligible candidates fit sample limit",
+                        "reason": "native ranking skipped: only one eligible candidate",
                     }
                     for p, _ in recalled
                 ]
@@ -352,7 +396,9 @@ class ContextRetriever:
             ):
                 raise ValueError("Invalid behavior reranking result")
             indexed = {p["request_id"]: p for p, _ in recalled}
-            # shortcut: reject scale extrapolation rather than invent a DAG rescaler; learn scaling from compatible executions.
+            ranked = sorted((j for j in judgments if j["usable"]), key=lambda j: -j["utility"])
+            evidence["context_neighbors"] = [j["id"] for j in ranked]
+            # Resource scenarios still require measured scale support; cost values disclose extrapolation separately.
             usable = [
                 j
                 for j in judgments
@@ -372,3 +418,5 @@ class ContextRetriever:
         finally:
             evidence["latency_s"] = time.perf_counter() - started
             evidence["cost"] = getattr(self.backend, "cost", 0.0) - before
+            evidence["rate_limit_retries"] = getattr(self.backend, "rate_limit_retries", 0) - retries_before
+            evidence["rate_limit_wait_s"] = getattr(self.backend, "rate_limit_wait_s", 0.0) - wait_before

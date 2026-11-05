@@ -1,4 +1,5 @@
 import asyncio
+from abc import ABC, abstractmethod
 from datetime import datetime,timezone
 import json
 import os
@@ -7,18 +8,24 @@ import time
 from openai import AsyncOpenAI,APIStatusError
 
 
-class DeepSeekClient:
-    def __init__(self,recorder,config):
-        key=os.getenv('DEEPSEEK_API_KEY')
-        if not key:raise ValueError('Configure DEEPSEEK_API_KEY outside Git')
-        self.client=AsyncOpenAI(api_key=key,base_url='https://api.deepseek.com',max_retries=0,timeout=180)
+class ModelClient(ABC):
+    def __init__(self,recorder,config,*,api_key_env,base_url):
+        key=os.getenv(api_key_env)
+        if not key:raise ValueError(f'Configure {api_key_env} outside Git')
+        self.client=AsyncOpenAI(api_key=key,base_url=base_url,max_retries=0,timeout=180)
         self.recorder=recorder;self.config=config;self.random=random.Random(config['seed']);self.tool_definitions=None
 
+    @abstractmethod
+    def model_parameters(self):
+        """Return only parameters supported by this model provider."""
+        raise NotImplementedError
+
+    async def aclose(self):
+        await self.client.close()
+
     async def decide(self,phase,iteration,messages):
-        request={'model':self.config.get('name','deepseek-flash'),'messages':messages,'response_format':{'type':'json_object'},
-                 **{k:self.config[k] for k in ('temperature','top_p','max_tokens')},
-                 **({'reasoning_effort':self.config['reasoning_effort']} if 'reasoning_effort' in self.config else {}),
-                 'extra_body':{'thinking':{'type':self.config.get('thinking','disabled')}}}
+        request={'model':self.config.get('name',self.default_model),'messages':messages,
+                 'response_format':{'type':'json_object'},**self.model_parameters()}
         if self.tool_definitions is not None:
             request.pop('response_format')
             definitions=json.loads(json.dumps(self.tool_definitions))
@@ -28,7 +35,7 @@ class DeepSeekClient:
                 {'type':'function','function':{'name':'submit_result','description':'Finish the task by submitting the final answer object in the format required by the system prompt.',
                  'parameters':{'type':'object','properties':{'answer':{'type':'object'}},'required':['answer']}}}]
             request['parallel_tool_calls']=False
-            if self.config.get('thinking','disabled')=='disabled':
+            if self.require_tool_call:
                 request['tool_choice']='required'
         self.recorder.emit('llm_start',phase=phase,iteration=iteration,request=request)
         start=time.perf_counter();started=datetime.now(timezone.utc).isoformat()
@@ -66,3 +73,53 @@ class DeepSeekClient:
                     retry_delay_s=delay,request=request,response=raw,usage=raw.get('usage') if raw else None)
                 if not retry:raise
                 await asyncio.sleep(delay)
+
+
+class DeepSeekClient(ModelClient):
+    default_model='deepseek-flash'
+
+    def __init__(self,recorder,config):
+        super().__init__(recorder,config,api_key_env='DEEPSEEK_API_KEY',base_url='https://api.deepseek.com')
+        self.require_tool_call=config.get('thinking','disabled')=='disabled'
+
+    def model_parameters(self):
+        return {**{k:self.config[k] for k in ('temperature','top_p','max_tokens')},
+                **({'reasoning_effort':self.config['reasoning_effort']} if 'reasoning_effort' in self.config else {}),
+                'extra_body':{'thinking':{'type':self.config.get('thinking','disabled')}}}
+
+
+class OpenAIClient(ModelClient):
+    require_tool_call=True
+    default_model=None
+
+    def __init__(self,recorder,config):
+        if not config.get('name'):raise ValueError('OpenAI models require an explicit model name')
+        base_url=config.get('base_url','https://api.openai.com/v1')
+        if 'gpt-oss' in config['name'] and base_url.rstrip('/')=='https://api.openai.com/v1':
+            raise ValueError('gpt-oss requires a self-hosted or third-party base_url; it is not served by the OpenAI API')
+        super().__init__(recorder,config,api_key_env=config.get('api_key_env','OPENAI_API_KEY'),base_url=base_url)
+
+    def model_parameters(self):
+        parameters={'max_completion_tokens':self.config['max_tokens']}
+        if 'reasoning_effort' in self.config:parameters['reasoning_effort']=self.config['reasoning_effort']
+        if self.config.get('reasoning_effort')=='none':
+            parameters.update({k:self.config[k] for k in ('temperature','top_p') if k in self.config})
+        return parameters
+
+
+class OpenAICompatibleClient(OpenAIClient):
+    def __init__(self,recorder,config):
+        if not config.get('base_url'):raise ValueError('OpenAI-compatible models require an explicit base_url')
+        super().__init__(recorder,config)
+
+    def model_parameters(self):
+        return {**{k:self.config[k] for k in ('temperature','top_p','max_tokens') if k in self.config},
+                **({'reasoning_effort':self.config['reasoning_effort']} if 'reasoning_effort' in self.config else {}),
+                **({'extra_body':self.config['extra_body']} if 'extra_body' in self.config else {})}
+
+
+def create_model_client(recorder,config):
+    provider=config.get('provider','deepseek')
+    clients={'deepseek':DeepSeekClient,'openai':OpenAIClient,'openai_compatible':OpenAICompatibleClient}
+    if provider not in clients:raise ValueError(f'Unknown model provider: {provider}')
+    return clients[provider](recorder,config)

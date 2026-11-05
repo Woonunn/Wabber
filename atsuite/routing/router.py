@@ -16,7 +16,7 @@ from atsuite.provider_model.observation import (
 )
 from atsuite.routing.exploration import Exploration, model_revision
 from atsuite.routing.objective import pareto, validate_weights
-from atsuite.workload.descriptor import context_key, validate_descriptor
+from atsuite.workload.descriptor import compatible, context_key, resource_distance, validate_descriptor
 from atsuite.workload.profile import number
 
 
@@ -246,7 +246,7 @@ class OnlineRouter:
                 self.spent += inference_budget_charge
             profiles = workload["joint_profiles"]
             predictions = [
-                self.provider.predict(profiles, [pool], rates[key], as_of_ns=now)["pools"][0]
+                self.provider.predict(workload, [pool], rates[key], as_of_ns=now)["pools"][0]
                 for key, pool in self.pools.items()
             ]
             candidates = []
@@ -311,6 +311,18 @@ class OnlineRouter:
                 # Occupancy is a snapshot, not a fabricated queue measurement.
                 if latency is not None:
                     latency += (now - arrival) / 1e9 + time.perf_counter() - prediction_start
+                evidence = self.exploration.evidence(
+                    self.provider, pool, descriptor, now,
+                ) if self.exploration else None
+                if evidence is not None:
+                    evidence["pending_feedback"] = sum(
+                        pending["selected"] == key and not pending.get("capacity_transition")
+                        and compatible(descriptor, pending.get("descriptor"))
+                        and (descriptor.get("model") or {}).get("name")
+                        == (pending["descriptor"].get("model") or {}).get("name")
+                        and (not evidence["has_cost_feedback"] or resource_distance(descriptor, pending["descriptor"]) <= .5)
+                        for pending in self.active.values()
+                    )
                 candidates.append(
                     {
                         "key": key,
@@ -335,9 +347,7 @@ class OnlineRouter:
                         "objective_latency": latency,
                         "reserved_cost": cap,
                         "execution_bounds": bound,
-                        "evidence": self.exploration.evidence(self.provider, pool, descriptor, now)
-                        if self.exploration
-                        else None,
+                        "evidence": evidence,
                     }
                 )
             feasible = [
@@ -349,12 +359,20 @@ class OnlineRouter:
                 if c["objective_cost"] is not None and (self.latency_weight == 0 or c["objective_latency"] is not None)
             ]
             comparable = bool(priced) and len({c["currency"] for c in priced}) == 1
-            # Uncalibrated demand or platform forecasts use the bounded default.
+            # Direct context-to-charge forecasts do not depend on resource-demand residuals.
             ranked = [
                 c for c in priced
-                if c["prediction_diagnostics"]["cost"]["reliable"]
+                if (c["prediction_diagnostics"]["cost"]["reliable"] or (
+                    c["cost"].get("contextual") and c["cost"]["total"]["n"] > 0
+                ))
                 and (self.latency_weight == 0 or c["prediction_diagnostics"]["latency"]["reliable"])
-            ] if comparable and not workload["low_confidence"] and (shadow or self.enable_context_routing) else []
+                and (not workload["low_confidence"] or (
+                    self.latency_weight == 0 and c["cost"].get("contextual")
+                    and not workload["missing_context"]
+                    and not workload["descriptor"]["unknown_file_sizes"]
+                    and not any(p["source"] == "capture" for p in profiles)
+                ))
+            ] if comparable and (shadow or self.enable_context_routing) else []
             frontier = pareto(ranked)
             selected = (
                 min(
@@ -390,6 +408,16 @@ class OnlineRouter:
                     if "budget" in self.exploration.config
                     else None
                 )
+                if (
+                    self.latency_weight == 0 and descriptor is not None
+                    and len(feasible) > 1 and not priced and self.exploration.config["epsilon"] > 0
+                    and self.exploration.opportunities(
+                        [c for c in candidates if remaining is None or c["reserved_cost"] <= remaining],
+                        None, cost_weight=self.cost_weight, latency_weight=self.latency_weight,
+                    )
+                ):
+                    # Execution eligibility is not an observed reward: use the existing no-incumbent warm-up.
+                    selected = None
                 selected, exploration = self.exploration.choose(
                     request_id,
                     descriptor,
@@ -399,6 +427,9 @@ class OnlineRouter:
                     cost_weight=self.cost_weight,
                     latency_weight=self.latency_weight,
                 )
+            sparse_value = selected and (selected.get("cost") or {}).get("contextual") and (
+                not selected["prediction_diagnostics"]["cost"]["reliable"] or len(ranked) < len(feasible)
+            )
             result = {
                 "exploration": exploration,
                 "model_revision": revision,
@@ -417,12 +448,14 @@ class OnlineRouter:
                 "mode": selected["prediction"]["mode"] if selected else None,
                 "reason": "provider_exploration"
                 if exploration["explored"]
+                else "contextual_bandit_value"
+                if sparse_value
                 else "cost_latency_objective"
                 if selected and ranked
                 else "validated_default"
                 if selected
                 else "no_feasible_pool",
-                "cost_comparable": comparable,
+                "cost_comparable": comparable and len(priced) == len(feasible),
                 "ranking": "weighted_cost_latency",
                 "objective": {
                     "cost_weight": self.cost_weight,

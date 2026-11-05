@@ -7,10 +7,22 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
-from experiments.e3.replay_routing import load_inputs, replay
+from experiments.e3.replay_routing import load_inputs, permute_arrivals, replay
 
 
 class LocalRoutingReplayTests(unittest.TestCase):
+    def test_order_validation_preserves_arrival_slots_and_logical_request_identity(self):
+        plan = {"duration_ms": 100, "requests": [
+            {"arrival_id": str(i), "task": "task-" + str(i), "relative_arrival_ms": i * 10}
+            for i in range(10)
+        ]}
+        changed = permute_arrivals(plan, 21)
+        self.assertEqual(changed, permute_arrivals(plan, 21))
+        self.assertNotEqual(changed["requests"], plan["requests"])
+        self.assertEqual([r["relative_arrival_ms"] for r in changed["requests"]],
+                         [r["relative_arrival_ms"] for r in plan["requests"]])
+        self.assertEqual({r["arrival_id"]: r["task"] for r in changed["requests"]},
+                         {r["arrival_id"]: r["task"] for r in plan["requests"]})
     def test_selected_costs_cumulative_order_and_only_completed_feedback(self):
         completed, updates, loads, visible = set(), [], [], []
 
@@ -26,7 +38,7 @@ class LocalRoutingReplayTests(unittest.TestCase):
         def complete(rid, trace, **kwargs):
             self.assertGreater(trace["completed_ns"], trace["arrival_ns"])
             completed.add(rid)
-            return {"id": rid}
+            return {"id": rid, "measurements": {"latency_s": 2}}
 
         def trace_loader(outcome):
             loads.append(outcome["directory"])
@@ -49,6 +61,13 @@ class LocalRoutingReplayTests(unittest.TestCase):
         self.assertEqual([r["cumulative_cost_cny"] for r in rows], ["1", "3", "303"])
         self.assertEqual(rows[-1]["cumulative_with_routing_cny"], "303.03")
         self.assertEqual(len(updates), 3)
+        completed.clear(); loads.clear(); visible.clear(); updates.clear()
+        with tempfile.TemporaryDirectory() as temporary:
+            sequential = replay({"requests": requests, "duration_ms": 20000}, dict.fromkeys(["1", "2", "3"], {}),
+                                outcomes, router, trace_loader, Path(temporary) / "run", feedback_mode="rounds")
+        self.assertEqual(visible, [("1", set()), ("2", {"1"}), ("3", {"1", "2"})])
+        self.assertEqual([r["cost_cny"] for r in sequential], ["1", "200", "300"])
+        self.assertEqual(sequential[-1]["cumulative_cost_cny"], "501")
 
     def test_missing_price_is_rejected_before_context_or_model_access(self):
         with tempfile.TemporaryDirectory() as temporary:

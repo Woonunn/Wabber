@@ -2,7 +2,7 @@
 
 入口是 `experiments.exp1.capture.capture_agent_traces`。使用真实 `StateGraph` 和 `Send`；没有 MetaGPT Harness、预构建 ReAct Agent或预先编写的任务执行计划。
 
-流程为 PLAN → PREPARE_WORKSPACE → DISPATCH → 动态 ANALYSIS 分支 → MERGE → 下一批就绪任务或 REVIEW；REVIEW 的实际 DeepSeek 决策可以完成、失败或进入 REPLAN。计划校验失败也可以进入 REPLAN。每个步骤必须引用原始 Prompt 的文字依据，DAG 必须无环，输出路径不得冲突，重复计算不能作为并行理由。`tool_results` 使用检查重复键的 State Reducer。
+流程为 PLAN → PREPARE_WORKSPACE → DISPATCH → 动态 ANALYSIS 分支 → MERGE → 下一批就绪任务或 REVIEW；REVIEW 的实际模型决策可以完成、失败或进入 REPLAN。计划校验失败也可以进入 REPLAN。每个步骤必须引用原始 Prompt 的文字依据，DAG 必须无环，输出路径不得冲突，重复计算不能作为并行理由。`tool_results` 使用检查重复键的 State Reducer。
 
 `state.py` 保存 request/session/task ID、原始 Prompt、消息、Workspace 引用、输入哈希、计划、Tool 的结构化结果、产物引用、迭代、状态和错误。DataFrame、数组和模型保留在 MCP Tool Runtime 的驻留内存中，或 FaaS 的可恢复状态文件中，不进入 LangGraph State。图表几何证据只保留小规模数值，较长曲线不放进 State。
 
@@ -49,7 +49,51 @@ uv run python -m experiments.exp1.capture.capture_agent_traces \
 
 ## 模型、Capture 和 Replay
 
-只调用 `https://api.deepseek.com` 的 `deepseek-flash`。保存完整请求/响应、原始 Prompt、JSON 决策、Tool 参数/结果、模型标识、Response ID、Token usage、采集 UTC 时间、单调时钟耗时、temperature/top-p/max_tokens、错误、重试与限流状态。返回模型名原样保存，不推断未提供的权重版本。数值随机过程使用 seed；外部模型的可复现性依靠完整 Capture 决策，不能保证再次请求 API 会生成同一响应。
+模型由 `ModelClient` 抽象统一管理决策、重试、记录和关闭。`DeepSeekClient`、`OpenAIClient` 和 `OpenAICompatibleClient` 分别构造供应商支持的参数，通过 `model.provider` 选择；不填 provider 时仍使用 DeepSeek。
+
+要接入托管 GPT，在现有运行配置的 `model` 对象中设置（保留原有 Tool 配置）：
+
+```json
+{"provider":"openai","name":"gpt-5.4-mini","seed":0,"reasoning_effort":"low","max_tokens":16000,"retries":2}
+```
+
+密钥放在项目 `.env` 的 `OPENAI_API_KEY`。该客户端使用 Chat Completions，并将配置中的 `max_tokens` 转成 `max_completion_tokens`；启用推理时不发送 temperature/top_p。配置 `reasoning_effort: "none"` 后可传 temperature/top_p。GPT-6 Astra、GPT-6.1 Sol 等要求 Responses API 才能使用工具的模型不在此 Chat Completions 客户端的工具调用支持范围内。
+
+`gpt-oss-20b` 是开放权重模型，不能通过 `api.openai.com` 调用。已有自部署或第三方 Chat Completions 服务时，使用：
+
+```json
+{"provider":"openai_compatible","name":"openai/gpt-oss-20b","base_url":"https://YOUR_INFERENCE_HOST/v1","api_key_env":"GPT_OSS_API_KEY","seed":0,"temperature":0,"top_p":1,"max_tokens":16000,"retries":2}
+```
+
+将 `GPT_OSS_API_KEY` 写入 `.env`，并替换 `base_url` 和 `name` 为供应商的实际值；例如 Ollama 使用 `http://127.0.0.1:11434/v1`、`gpt-oss:20b`，无鉴权端点也需设置 SDK 所需的非空占位密钥。服务必须支持 JSON object 输出和原生 function tools。修改的是 `--config` 指定的 JSON 文件，无需修改图或 Tool 实现。不要把密钥写进 JSON 配置或 URL，因为配置会被写入 Capture。
+
+### OpenRouter：gpt-oss-20b
+
+服务器项目 `.env` 使用 `OPENROUTER_API_KEY`，密钥不进入 Git。已提供完整配置 `benchmarks/DataSciBench/config/langgraph_openrouter_gpt_oss_20b.json`，其中模型为 `openai/gpt-oss-20b`、地址为 `https://openrouter.ai/api/v1`，复用 `OpenAICompatibleClient`。默认使用 low reasoning，输出上限 16000 tokens。
+
+固定 CoreWeave 上游并关闭自动回退（`model.extra_body.provider`）：本次实测自动路由至 Groq 时，`submit_result` 的答案字段变成空对象；CoreWeave 已通过真实 JSON、工具执行、最终答案和 Capture/Replay 检查。切换上游后应重新验证这些行为。
+
+在原有本地 Tool 服务运行后执行：
+
+```bash
+uv run python -m experiments.exp1.capture.capture_agent_traces \
+  --task human_12 \
+  --config benchmarks/DataSciBench/config/langgraph_openrouter_gpt_oss_20b.json
+```
+
+其它 workload 入口也读取同一个 `model` 配置对象，可直接使用该对象切换模型。原有 DeepSeek 配置继续可用。
+
+### OpenRouter：Qwen3.6-35B-A3B
+
+使用 `benchmarks/DataSciBench/config/langgraph_openrouter_qwen3_6_35b_a3b.json`，模型 ID 为 `qwen/qwen3.6-35b-a3b`，复用 `.env` 中的 `OPENROUTER_API_KEY` 和现有 `OpenAICompatibleClient`。配置固定 PrimeIntellect 上游并关闭自动回退，输出上限 16000 tokens，保留模型默认推理设置。
+
+在原有本地 Tool 服务运行后执行：
+
+```bash
+uv run python -m experiments.exp1.capture.capture_agent_traces --task human_12 --config benchmarks/DataSciBench/config/langgraph_openrouter_qwen3_6_35b_a3b.json
+```
+
+保存完整请求/响应、原始 Prompt、JSON 决策、Tool 参数/结果、模型标识、Response ID、Token usage、采集 UTC 时间、单调时钟耗时、temperature/top-p/max_tokens、错误、重试与限流状态。返回模型名原样保存，不推断未提供的权重版本。数值随机过程使用 seed；外部模型的可复现性依靠完整 Capture 决策，不能保证再次请求 API 会生成同一响应。
 
 Replay 仍运行相同 LangGraph：LLM 节点使用捕获的决策和延迟等待，不再调用模型 API；Tool 节点调用目标 endpoint，重新进行真实计算和计时。Provider endpoint、物理 UID、Request ID与实际耗时可以不同，业务参数及逻辑分支引用必须相同。检查原始用户消息、每个 Tool 的参数、状态、Python 状态签名和实际文件签名。CSV 规范化到 8 位小数、PNG 使用解码像素、PDF 使用文本/图像；其它文件采用 SHA256，不能忽略不兼容输出。
 
